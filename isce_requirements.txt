@@ -1,0 +1,13 @@
+python=3.8.6
+cython
+gdal
+git
+h5py
+libgdal
+pytest
+numpy
+fftw
+scipy
+basemap
+scons
+opencv
