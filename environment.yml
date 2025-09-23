@@ -1,0 +1,33 @@
+name: crevasse-advection
+channels:
+ - conda-forge
+dependencies:
+ - python=3.13
+ - numpy
+ - pandas
+ - geopandas
+ - scipy
+ - matplotlib
+ - imageio
+ - xarray
+ - dask
+ - netcdf4
+ - rasterio
+ - rioxarray
+ - shapely
+ - asf_search
+ - pdemtools
+ - ipykernel
+ - pystac
+ - pystac-client
+ - boto3
+ - opencv  # iceutils packages
+ - scikit-learn
+ - pint
+ - cvxopt
+ - gdal
+ - h5py
+ - pyproj
+ - proj
+ - scikit-image
+ - tqdm
