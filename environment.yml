@@ -21,13 +21,5 @@ dependencies:
  - pystac
  - pystac-client
  - boto3
- - opencv  # iceutils packages
- - scikit-learn
- - pint
- - cvxopt
- - gdal
- - h5py
- - pyproj
- - proj
- - scikit-image
  - tqdm
+ - cmocean
