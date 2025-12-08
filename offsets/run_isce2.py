@@ -39,24 +39,24 @@ def get_SAFE(username, password):
         results.download(path='SAFE/', session=user_pass_session)
         print('SAFE files downloaded.\n')
 
-    # Extract ZIP files 
-    zips = glob.glob('SAFE/*.zip')
-    if zips:
-        print('Extracting ZIP files')
-        for zip_file in zips:
-            print(f"  Extracting {zip_file}")
-            with ZipFile(zip_file, 'r') as zf:
-                zf.extractall('SAFE/')
+    # # Extract ZIP files 
+    # zips = glob.glob('SAFE/*.zip')
+    # if zips:
+    #     print('Extracting ZIP files')
+    #     for zip_file in zips:
+    #         print(f"  Extracting {zip_file}")
+    #         with ZipFile(zip_file, 'r') as zf:
+    #             zf.extractall('SAFE/')
             
-            # Remove zip after extraction
-            print(f"  Removing {zip_file}")
-            os.remove(zip_file)
+    #         # Remove zip after extraction
+    #         print(f"  Removing {zip_file}")
+    #         os.remove(zip_file)
     
-        print('All ZIP files extracted')
+    #     print('All ZIP files extracted')
 
 def get_orbits():
     safe_dir = '../SAFE/'
-    safe_files = glob.glob(f'{safe_dir}*.SAFE')
+    safe_files = glob.glob(f'{safe_dir}*.zip')
 
     if len(safe_files) < 2:
         raise ValueError(f'You need at least 2 SAFE files, only found {len(safe_files)}')
@@ -84,8 +84,8 @@ def setup_environment():
     
     isce_home = f'{conda_path}/{isce_env}/lib/python3.8/site-packages/isce'
     isce_stack = f'{conda_path}/{isce_env}/share/isce2'
+    isce_lib_path = f"{conda_path}/{isce_env}/lib"
     
-    isce_lib_path = "/home/jovyan/envs/isce2/lib"
     os.environ["LD_LIBRARY_PATH"] = f"{isce_lib_path}:{os.environ.get('LD_LIBRARY_PATH', '')}"
     os.environ['ISCE_HOME'] = isce_home
     os.environ['ISCE_STACK'] = isce_stack
@@ -114,25 +114,25 @@ def setup_environment():
     
     return isce_home, isce_stack
 
-def find_safe_files():
-    """Find SAFE files in the safe directory"""
-    safe_dirs = ["SAFE", "SAFE", "SAFE"]
-    safe_dir = None
+# def find_safe_files():
+#     """Find SAFE files in the safe directory"""
+#     safe_dirs = ["SAFE", "SAFE", "SAFE"]
+#     safe_dir = None
     
-    for dirname in safe_dirs:
-        if os.path.exists(dirname):
-            safe_dir = dirname
-            break
+#     for dirname in safe_dirs:
+#         if os.path.exists(dirname):
+#             safe_dir = dirname
+#             break
     
-    if not safe_dir:
-        return []
+#     if not safe_dir:
+#         return []
     
-    safe_files = []
-    for item in os.listdir(safe_dir):
-        if item.endswith('.SAFE') and os.path.isdir(os.path.join(safe_dir, item)):
-            safe_files.append(os.path.join(safe_dir, item))
+#     safe_files = []
+#     for item in os.listdir(safe_dir):
+#         if (item.endswith('.SAFE') or item.endswith('.zip')) and os.path.isdir(os.path.join(safe_dir, item)):
+#             safe_files.append(os.path.join(safe_dir, item))
     
-    return sorted(safe_files)
+#     return sorted(safe_files)
 
 def date_from_safe(file):
     """Extract acquisition date from SAFE file"""
@@ -142,8 +142,8 @@ def date_from_safe(file):
 def find_dem_file():
     """Find DEM file - use fixed path since DEM doesn't change"""
     # Fixed DEM path - update this to your actual DEM location
-    fixed_dem_path = "/home/jovyan/shared-readwrite/BlueIce/offsets/dem/fixed_dem.wgs84"
-    
+    fixed_dem_path = "/home/jovyan/crevasse-advection/offsets/dem/fixed_dem.wgs84"
+
     if os.path.exists(fixed_dem_path):
         return fixed_dem_path
     
@@ -186,7 +186,7 @@ def run_topsapp():
         log_and_print(f"ISCE_STACK: {os.environ.get('ISCE_STACK')}")
 
         # Find SAFE files
-        safe_files = find_safe_files()
+        safe_files = sorted(glob.glob('SAFE/*.zip'))
         if len(safe_files) < 2:
             log_and_print(f"ERROR: Need at least 2 SAFE files, found {len(safe_files)}")
             return False
@@ -241,8 +241,7 @@ def run_topsapp():
     <component name="reference">
         <property name="safe">['../{safe_files[i]}']</property>
         <property name="output directory">reference</property>
-        <property name="orbit directory">/home/jovyan/shared-readwrite/BlueIce/offsets/orbits</property>
-        <property name="auxiliary data directory">/home/jovyan/shared-readwrite/BlueIce/offsets/aux</property>
+        <property name="orbit directory">../orbits</property>
         <property name="polarization">hh</property>
     </component>'''
             
@@ -251,8 +250,7 @@ def run_topsapp():
     <component name="secondary">
         <property name="safe">['../{safe_files[i+1]}']</property>
         <property name="output directory">secondary</property>
-        <property name="orbit directory">/home/jovyan/shared-readwrite/BlueIce/offsets/orbits</property>
-        <property name="auxiliary data directory">/home/jovyan/shared-readwrite/BlueIce/offsets/aux</property>
+        <property name="orbit directory">../orbits</property>
         <property name="polarization">hh</property>
     </component>'''
 
@@ -476,13 +474,13 @@ def main():
     print('='*80)
     os.chdir('orbits')
     get_orbits()
-
-    print('='*80)
-    print(f"{'Get AUX files':^80}")
-    print('='*80)
-    os.chdir('../aux/')
-    get_aux(username, password)
     os.chdir('..')
+
+    # print('='*80)
+    # print(f"{'Get AUX files':^80}")
+    # print('='*80)
+    # os.chdir('../aux/')
+    # get_aux(username, password)
 
     print('='*80)
     print(f"{'Begin Offset Computation':^80}")
