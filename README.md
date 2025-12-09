@@ -1,8 +1,10 @@
 # ISCE2 Processing and Crevasse Advection
 
-Using the ISCE2 dense offsets module, we can determine the flow of glacial ice from Sentinel-1 Synthetic Aperture Radar.
-This workflow is cloud native and is designed to process multiple offsets in series. 
+Using the ISCE2 interferometric processor, we perform pixel offset tracking to determine the flow of glacial ice from Sentinel-1 Synthetic Aperture Radar (SAR).
+This workflow is cloud native and is designed to process multiple offsets in series, exploiting the amplitude of a SAR image. 
 It can easily be applied to create your own surface velocity timeseries anywhere with adequate Sentinel-1 coverage.
+
+More information will be detailed in our forthcoming publication.
 
 ## Installation
 
