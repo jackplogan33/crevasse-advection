@@ -392,8 +392,11 @@ def run_topsapp():
             return False
 
 def crop_denseoff(file):
+    xmin, xmax = 1.345e6, 1.43e6
+    ymin, ymax = 1.646e6, 1.76e6
+    
     da = xr.open_dataarray(file, engine='rasterio').rio.reproject(3031, nodata=np.nan)
-    da = da.sel(x=slice(1.345e6, 1.43e6), y=slice(1.76e6, 1.646e6))
+    da = da.sel(x=slice(xmin, xmax), y=slice(ymax, ymin))
     return da
 
 def clean_dir(processing_dir):

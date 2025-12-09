@@ -1,1 +1,8 @@
-fetchOrbits.py
+# 
+fetchOrbit.py
+*.SAFE/
+*.SAFE
+*.EOF
+*.log
+
+20*-20*/
