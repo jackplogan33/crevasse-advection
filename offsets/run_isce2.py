@@ -39,21 +39,6 @@ def get_SAFE(username, password):
         results.download(path='SAFE/', session=user_pass_session)
         print('SAFE files downloaded.\n')
 
-    # # Extract ZIP files 
-    # zips = glob.glob('SAFE/*.zip')
-    # if zips:
-    #     print('Extracting ZIP files')
-    #     for zip_file in zips:
-    #         print(f"  Extracting {zip_file}")
-    #         with ZipFile(zip_file, 'r') as zf:
-    #             zf.extractall('SAFE/')
-            
-    #         # Remove zip after extraction
-    #         print(f"  Removing {zip_file}")
-    #         os.remove(zip_file)
-    
-    #     print('All ZIP files extracted')
-
 def get_orbits():
     safe_dir = '../SAFE/'
     safe_files = glob.glob(f'{safe_dir}*.zip')
@@ -114,52 +99,10 @@ def setup_environment():
     
     return isce_home, isce_stack
 
-# def find_safe_files():
-#     """Find SAFE files in the safe directory"""
-#     safe_dirs = ["SAFE", "SAFE", "SAFE"]
-#     safe_dir = None
-    
-#     for dirname in safe_dirs:
-#         if os.path.exists(dirname):
-#             safe_dir = dirname
-#             break
-    
-#     if not safe_dir:
-#         return []
-    
-#     safe_files = []
-#     for item in os.listdir(safe_dir):
-#         if (item.endswith('.SAFE') or item.endswith('.zip')) and os.path.isdir(os.path.join(safe_dir, item)):
-#             safe_files.append(os.path.join(safe_dir, item))
-    
-#     return sorted(safe_files)
-
 def date_from_safe(file):
     """Extract acquisition date from SAFE file"""
     match = re.search(r'(\d{8})T\d{6}', file)
     return match.group(1)
-
-def find_dem_file():
-    """Find DEM file - use fixed path since DEM doesn't change"""
-    # Fixed DEM path - update this to your actual DEM location
-    fixed_dem_path = "/home/jovyan/crevasse-advection/offsets/dem/fixed_dem.wgs84"
-
-    if os.path.exists(fixed_dem_path):
-        return fixed_dem_path
-    
-    # Fallback to local search if fixed path doesn't exist
-    dem_patterns = ["*.dem.wgs84", "*.dem", "*.tif", "*.tiff"]
-    dem_files = []
-    for pattern in dem_patterns:
-        dem_files.extend(glob.glob(pattern))
-    
-    if dem_files:
-        # Prefer .dem.wgs84 files as they usually work better with ISCE
-        wgs84_dems = [f for f in dem_files if f.endswith('.dem.wgs84')]
-        if wgs84_dems:
-            return wgs84_dems[0]
-        return dem_files[0]
-    return None
 
 def run_topsapp():
     # run environment setup
@@ -191,8 +134,9 @@ def run_topsapp():
             log_and_print(f"ERROR: Need at least 2 SAFE files, found {len(safe_files)}")
             return False
 
-        # Find DEM
-        dem_file = find_dem_file()
+        # Fixed DEM path - update this to your actual DEM location
+        dem_file = "/home/jovyan/crevasse-advection/offsets/dem/REMA_10m_shirase.dem"
+
         if not dem_file:
             log_and_print("ERROR: No DEM file found")
             return False

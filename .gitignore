@@ -2,7 +2,13 @@
 fetchOrbit.py
 *.SAFE/
 *.SAFE
+*.zip
 *.EOF
 *.log
 
 20*-20*/
+.ipynb_checkpoints/
+__pycache__/
+.copernicus_dataspace_token
+*.wgs84*
+*.dem*
