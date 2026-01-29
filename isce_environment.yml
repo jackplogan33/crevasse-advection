@@ -1,0 +1,22 @@
+name: isce2
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8
+  - cython
+  - gdal
+  - git
+  - h5py
+  - libgdal
+  - pytest
+  - numpy
+  - fftw
+  - scipy
+  - basemap
+  - scons
+  - opencv
+  - isce2 
+  - boto3 
+  - jupyter 
+  - conda-build 
+  - ipykernel

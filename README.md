@@ -19,11 +19,9 @@ cd ./crevasse-advection
 ```
 
 2. ISCE Environment:
-Run the following commands below in terminal:
+Run the following command below in terminal:
 ```bash
-conda create --name isce2 --file isce_requirements.txt
-conda activate isce2
-conda install isce2 boto3 jupyter conda-build ipykernel
+conda env create -f isce_environment.yml
 ```
 
 3. Processing Environment:
