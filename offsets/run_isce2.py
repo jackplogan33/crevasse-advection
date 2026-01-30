@@ -135,7 +135,7 @@ def run_topsapp():
             return False
 
         # Fixed DEM path - update this to your actual DEM location
-        dem_file = "/home/jovyan/crevasse-advection/offsets/dem/REMA_10m_shirase.dem"
+        dem_file = "/home/jovyan/crevasse-advection/offsets/dem/REMA_10m_shirase.bil"
 
         if not dem_file:
             log_and_print("ERROR: No DEM file found")
@@ -144,7 +144,7 @@ def run_topsapp():
         log_and_print(f"DEM file: {dem_file}")
 
         # Check if DEM has proper metadata files
-        if dem_file.endswith('.dem'):
+        if dem_file.endswith('.bil'):
             xml_file = dem_file + '.xml'
             vrt_file = dem_file + '.vrt'
             log_and_print(f"Checking for DEM metadata files...")
