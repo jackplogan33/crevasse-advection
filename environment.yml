@@ -16,10 +16,11 @@ dependencies:
  - rioxarray
  - shapely
  - asf_search
- - pdemtools
  - ipykernel
  - pystac
  - pystac-client
  - boto3
  - tqdm
  - cmocean
+ - pdemtools
+ - jupyterlab
