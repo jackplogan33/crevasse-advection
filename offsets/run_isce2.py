@@ -10,6 +10,7 @@ import asf_search as asf
 import numpy as np
 import xarray as xr
 import logging
+import json
 from pathlib import Path
 
 ########### LOGGING ###########################################################
@@ -84,20 +85,29 @@ def get_aux(ED_username, ED_password):
 
 ########### ENVIRONMENT #######################################################
 
+def get_envs_root():
+    # Ask conda for its config info
+    result = subprocess.run(
+        ['conda', 'info', '--json'],
+        capture_output=True, text=True
+    )
+    info = json.loads(result.stdout)
+    return info['envs_dirs'][0]  # First/default envs directory
+
+    
 def setup_environment():
     """Setup ISCE2 environment"""
-    # . . User-configurable paths - edit these if your setup differs
-    envs_root = '/home/jovyan'  # Where all your anaconda environments are stored
-    
-    # . . Derived paths (no edits needed below this line)
-    isce_home = f"{envs_root}/envs/isce2/lib/python3.8/site-packages/isce"
+    # . . Automatically pull environment root
+    envs_root = get_envs_root()
+
+    isce_home = f"{envs_root}/envs/isce2/lib/python3.11/site-packages/isce"
     isce_stack = f"{envs_root}/envs/isce2/share/isce2"
     isce_lib_path = f"{envs_root}/envs/isce2/lib"
     
     os.environ['LD_LIBRARY_PATH'] = f"{isce_lib_path}:{os.environ.get('LD_LIBRARY_PATH', '')}"
     os.environ['ISCE_HOME'] = isce_home
     os.environ['ISCE_STACK'] = isce_stack
-    os.environ['ISCE_ROOT'] = f"{isce_lib_path}/python3.8/site-packages"
+    os.environ['ISCE_ROOT'] = f"{isce_lib_path}/python3.11/site-packages"
     
     path_components = [
         f"{isce_home}/bin",
@@ -210,7 +220,7 @@ def run_topsapp_cmd(logger=None):
     """Run topsApp.py, stream output to logger, and return the exit code."""
     # . . Run topsApp to generate offsets
     log = get_logger(logger)
-    cmd = ['conda', 'run', '-n', 'isce2', 'topsApp.py', 'topsApp.xml']
+    cmd = ['conda', 'run', 'topsApp.py', 'topsApp.xml']
     
     process = subprocess.Popen(
         cmd,
@@ -388,7 +398,7 @@ def main():
     get_orbits()
     os.chdir('..')
 
-    # . . Uncomment to enable AUX file download:
+    # # . . Uncomment to enable AUX file download:
     # print('='*80)
     # print(f"{'Get AUX files':^80}")
     # print('='*80)

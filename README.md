@@ -8,30 +8,20 @@ More information will be detailed in our forthcoming publication.
 
 ## Installation
 
-This repository requires creating two separate conda environments. 
-The first includes all required packages to run ISCE2. 
-The second includes all packages required for the input files and output postprocessing. 
-
 1. Clone repository:
 ```bash
 git clone https://github.com/jackplogan33/crevasse-advection/
 cd ./crevasse-advection
 ```
 
-2. ISCE Environment:
-Run the following command below in terminal:
-```bash
-conda env create -f isce_environment.yml
-```
-
-3. Processing Environment:
+2. Processing Environment:
 ```bash
 conda env create -f environment.yml
 ```
 
-4. Create a kernel for use in Jupyter Lab
+3. Create a kernel for use in Jupyter Lab:
 ```bash
-python -m ipykernel install --user --name crevasse-advection --display-name "IPython - crevasse-advection"
+python -m ipykernel install --user --name isce2 --display-name "isce2"
 ```
 
 ## Usage

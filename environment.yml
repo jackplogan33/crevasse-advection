@@ -1,8 +1,9 @@
-name: crevasse-advection
+name: isce2
 channels:
  - conda-forge
 dependencies:
  - python=3.11
+ - cython
  - numpy
  - pandas
  - geopandas
@@ -24,3 +25,13 @@ dependencies:
  - cmocean
  - pdemtools
  - jupyterlab
+ - gdal
+ - h5py
+ - libgdal
+ - pytest
+ - fftw
+ - basemap
+ - scons
+ - opencv
+ - conda-build
+ - isce2
