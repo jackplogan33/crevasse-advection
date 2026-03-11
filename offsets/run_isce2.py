@@ -6,10 +6,27 @@ import glob
 import time
 import re 
 import getpass
-from zipfile import ZipFile
 import asf_search as asf
 import numpy as np
 import xarray as xr
+import logging
+from pathlib import Path
+
+########### LOGGING ###########################################################
+
+def get_logger(logger=None):
+    return logger or logging.getLogger("topsapp")
+
+
+def setup_logger(log_path="topsapp_processing.log"):
+    logger = logging.getLogger("topsapp")
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.FileHandler(log_path))
+    logger.addHandler(logging.StreamHandler())
+    return logger
+
+
+########### DATA ACQUISITION ##################################################
 
 def get_SAFE(username, password):
     """Download SAFE Files"""
@@ -39,6 +56,7 @@ def get_SAFE(username, password):
         results.download(path='SAFE/', session=user_pass_session)
         print('SAFE files downloaded.\n')
 
+
 def get_orbits():
     safe_dir = '../SAFE/'
     safe_files = glob.glob(f'{safe_dir}*.zip')
@@ -49,34 +67,38 @@ def get_orbits():
     for file in safe_files:
         os.system(f'../fetchOrbit.py -i {file[8:-5]}')
 
+    
 def get_aux(ED_username, ED_password):
     os.system('echo "machine urs.earthdata.nasa.gov login {ED_username} password {ED_password}" > ~/.netrc')
     os.system('chmod 0600 ~/.netrc')
 
-    bash_script = """
+    bash_script = '''
     #!/bin/bash
     URL=https://s1qc.asf.alaska.edu/aux_cal
     cd ../aux
     wget -r -l2 -nc -nd -np -nH -A SAFE $URL
-    """
+    '''
     # Run the script
-    subprocess.run(bash_script, shell=True, executable="/bin/bash", check=True)
+    subprocess.run(bash_script, shell=True, executable='/bin/bash', check=True)
+
+
+########### ENVIRONMENT #######################################################
 
 def setup_environment():
     """Setup ISCE2 environment"""
-    conda_path = '/home/jovyan'
-    isce_env = 'envs/isce2'
+    # . . User-configurable paths - edit these if your setup differs
+    envs_root = '/home/jovyan'  # Where all your anaconda environments are stored
     
-    isce_home = f'{conda_path}/{isce_env}/lib/python3.8/site-packages/isce'
-    isce_stack = f'{conda_path}/{isce_env}/share/isce2'
-    isce_lib_path = f"{conda_path}/{isce_env}/lib"
+    # . . Derived paths (no edits needed below this line)
+    isce_home = f"{envs_root}/envs/isce2/lib/python3.8/site-packages/isce"
+    isce_stack = f"{envs_root}/envs/isce2/share/isce2"
+    isce_lib_path = f"{envs_root}/envs/isce2/lib"
     
-    os.environ["LD_LIBRARY_PATH"] = f"{isce_lib_path}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+    os.environ['LD_LIBRARY_PATH'] = f"{isce_lib_path}:{os.environ.get('LD_LIBRARY_PATH', '')}"
     os.environ['ISCE_HOME'] = isce_home
     os.environ['ISCE_STACK'] = isce_stack
-    os.environ['ISCE_ROOT'] = f'{conda_path}/{isce_env}/lib/python3.8/site-packages'
+    os.environ['ISCE_ROOT'] = f"{isce_lib_path}/python3.8/site-packages"
     
-    # Update PATH and PYTHONPATH
     path_components = [
         f"{isce_home}/bin",
         f"{isce_home}/applications",
@@ -84,128 +106,52 @@ def setup_environment():
         os.environ.get('PATH', '')
     ]
     os.environ['PATH'] = ':'.join(filter(None, path_components))
-    
-    pythonpath_components = [
-        f'{conda_path}/{isce_env}/lib/python3.8/site-packages',
-        isce_home,
-        isce_stack,
-        f"{isce_home}/applications",
-        f"{isce_home}/components",
-        os.environ.get('PYTHONPATH', '')
-    ]
-    os.environ['PYTHONPATH'] = ':'.join(filter(None, pythonpath_components))
-    
     os.environ['OMP_NUM_THREADS'] = '8'
-    
-    return isce_home, isce_stack
+
+
+########### HELPERS ###########################################################
 
 def date_from_safe(file):
     """Extract acquisition date from SAFE file"""
     match = re.search(r'(\d{8})T\d{6}', file)
     return match.group(1)
 
-def run_topsapp():
-    # run environment setup
-    isce_home, isce_stack = setup_environment()
 
-    # Get parent dir
-    parent_dir = os.getcwd()
+def compute_n_passes(start_dt, end_dt):
+    """Calculate number of 12-day Sentinel-1 passes between two YYYYMMDD date strings."""
+    to_dt64 = lambda s: np.datetime64(f"{s[:4]}-{s[4:6]}-{s[6:]}")
+    return int(np.ceil((to_dt64(end_dt) - to_dt64(start_dt)).astype("int64") / 12))
 
-    # Log file setup
-    log_file_path = "topsapp_processing.log"
 
-    with open(log_file_path, "w") as log_file:
-        def log_and_print(message):
-            print(message)
-            log_file.write(message + "\n")
-            log_file.flush()
+def validate_dem(dem_file, logger=None):
+    """Warn if expected DEM sidecar files are missing."""
+    log = get_logger(logger)
+    
+    if not dem_file.endswith(".bil"):
+        return
+    for ext, label in [(".xml", "ISCE XML"), (".vrt", "VRT"), ('.aux.xml', 'XML')]:
+        path = dem_file + ext
+        status = "exists" if os.path.exists(path) else "missing"
+        log.info(f"  DEM {label} file: {path} — {status}")
+    if not os.path.exists(dem_file + ".xml"):
+        log.warning("DEM XML file missing. This may cause processing to fail.")
+        log.warning("Consider using a .dem.wgs84 file with proper metadata.")
 
-        def log(message):
-            log_file.write(message + "\n")
-            log_file.flush()
 
-        log_and_print(f"\nWorking directory: {os.getcwd()}")
-        log_and_print(f"ISCE_HOME: {os.environ.get('ISCE_HOME')}")
-        log_and_print(f"ISCE_STACK: {os.environ.get('ISCE_STACK')}")
+########### XML GENERATION ####################################################
 
-        # Find SAFE files
-        safe_files = sorted(glob.glob('SAFE/*.zip'))
-        if len(safe_files) < 2:
-            log_and_print(f"ERROR: Need at least 2 SAFE files, found {len(safe_files)}")
-            return False
+def make_scene_xml(role, safe_file, orbit_dir='../orbits'):
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<component name="{role}">
+    <property name="safe">['../{safe_file}']</property>
+    <property name="output directory">{role}</property>
+    <property name="orbit directory">{orbit_dir}</property>
+    <property name="polarization">hh</property>
+</component>"""
 
-        # Fixed DEM path - update this to your actual DEM location
-        dem_file = "/home/jovyan/crevasse-advection/offsets/dem/REMA_10m_shirase.bil"
 
-        if not dem_file:
-            log_and_print("ERROR: No DEM file found")
-            return False
-
-        log_and_print(f"DEM file: {dem_file}")
-
-        # Check if DEM has proper metadata files
-        if dem_file.endswith('.bil'):
-            xml_file = dem_file + '.xml'
-            vrt_file = dem_file + '.vrt'
-            log_and_print(f"Checking for DEM metadata files...")
-            log_and_print(f"  XML file: {xml_file} - {'exists' if os.path.exists(xml_file) else 'missing'}")
-            log_and_print(f"  VRT file: {vrt_file} - {'exists' if os.path.exists(vrt_file) else 'missing'}")
-            
-            # If no XML file exists, try to create a basic one for the DEM
-            if not os.path.exists(xml_file):
-                log_and_print("WARNING: DEM XML file missing. This may cause processing to fail.")
-                log_and_print("Consider using a .dem.wgs84 file with proper metadata.")
-
-        # Number of offset paits to compute (1 less than SAFE files)
-        num_pairs = len(safe_files) - 1
-        log_and_print(f"\nTotal number of offsets to compute: {num_pairs}")
-        return_codes = []
-
-        start_time = time.time()
-        for i in range(num_pairs):
-            log_and_print("\n")
-            msg = f"=== Preprocessing for Offset {i+1} started at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="
-            log_and_print(f"{msg:=^80}")
-            log_and_print(f"\nReference SAFE: {safe_files[i]}")
-            log_and_print(f"Secondary SAFE: {safe_files[i+1]}")
-            log_and_print(f"DEM file: {dem_file}")
-
-            # ... Make directories for pairs ...
-            dates = [date_from_safe(sf) for sf in safe_files[i:i+2]]
-            pair_dir = f"{parent_dir}/{'-'.join(dates)}"
-            os.makedirs(pair_dir, exist_ok=True)
-            log_and_print(f"\n✓ Created directory: {pair_dir}")
-
-            # ... change into that directory ...
-            os.chdir(pair_dir)
-            log_and_print(f"✓ Moved to directory: {pair_dir}")
-
-            # Create reference catalog XML
-            reference_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-    <component name="reference">
-        <property name="safe">['../{safe_files[i]}']</property>
-        <property name="output directory">reference</property>
-        <property name="orbit directory">../orbits</property>
-        <property name="polarization">hh</property>
-    </component>'''
-            
-            # Create secondary catalog XML  
-            secondary_xml = f'''<?xml version="1.0" encoding="UTF-8"?>
-    <component name="secondary">
-        <property name="safe">['../{safe_files[i+1]}']</property>
-        <property name="output directory">secondary</property>
-        <property name="orbit directory">../orbits</property>
-        <property name="polarization">hh</property>
-    </component>'''
-
-            # ... Get number of 12-day intervals between images
-            start_dt, end_dt = dates
-            start = np.datetime64(f'{start_dt[:4]}-{start_dt[4:6]}-{start_dt[6:]}')
-            end = np.datetime64(f'{end_dt[:4]}-{end_dt[4:6]}-{end_dt[6:]}')
-            n_passes = np.ceil((end - start).astype('int64') / 12)
-            
-            # Create main topsApp XML configuration for dense offsets
-            xml_config = f'''<?xml version="1.0" encoding="UTF-8"?>
+def make_topsapp_xml(dem_file, n_passes):
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
     <topsApp>
         <component name="topsinsar">
             <property name="Sensor name">SENTINEL1</property>
@@ -245,161 +191,180 @@ def run_topsapp():
             <property name="Ampcor skip height">8</property>
 
         </component>
-    </topsApp>'''
-            
-            # Write all XML files
-            with open("reference.xml", "w") as f:
-                f.write(reference_xml)
-            log_and_print("✓ Created reference.xml")
-            
-            with open("secondary.xml", "w") as f:
-                f.write(secondary_xml)  
-            log_and_print("✓ Created secondary.xml")
-            
-            config_file = "topsApp.xml"
-            with open(config_file, "w") as f:
-                f.write(xml_config)
-            log_and_print(f"✓ Created topsApp configuration: {config_file}\n")
-            
-            # Start TOPSAPP
-            msg = f"=== topsApp for Pair {i+1} started at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="
-            log_and_print(f"{msg:=^80}")
-            log_and_print(f"\nWorking Directory: {os.getcwd()}")
-            log_and_print(f"Parent Directory:  {parent_dir}")
-            
-            # Run ISCE2 command
-            cmd = f"conda run -n isce2 topsApp.py {config_file}"
+    </topsApp>"""
 
-            log_and_print(f"\nStarting topsApp with commmand: {cmd}")
-            log_and_print("="*80 + '\n')
 
-            try:
-                process = subprocess.Popen(
-                    cmd, 
-                    shell=True, 
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    env=os.environ,
-                    cwd=os.getcwd(),
-                )
+def write_xml_files(ref_safe, sec_safe, dem_file, n_passes):
+    """Write reference.xml, secondary.xml, and topsApp.xml to the current directory."""
+    with open("reference.xml", "w") as f:
+        f.write(make_scene_xml("reference", ref_safe))
+    with open("secondary.xml", "w") as f:
+        f.write(make_scene_xml("secondary", sec_safe))
+    with open("topsApp.xml", "w") as f:
+        f.write(make_topsapp_xml(dem_file, n_passes))
 
-                while True:
-                    output = process.stdout.readline()
-                    if output == '' and process.poll() is not None:
-                        break
-                    if output:
-                        message = output.strip()
-                        log(message)
 
-                return_code = process.poll()
+########### PROCESSING ####################################################
 
-                log_and_print("="*80)
-                log_and_print(f"Processing finished at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-                log_and_print(f"Return code: {return_code}")
-                
-                if return_code == 0:
-                    log_and_print("Cleaning Directory ...")
-                    clean_dir(os.getcwd())
-                    
-                    log_and_print('\n')
-                    log_and_print('Removing reference SAFE file:')
-                    remove_safe(f'{parent_dir}/{safe_files[i]}')
-                    log_and_print(f'Removed SAFE file: {safe_files[i]}\n')
+def run_topsapp_cmd(logger=None):
+    """Run topsApp.py, stream output to logger, and return the exit code."""
+    # . . Run topsApp to generate offsets
+    log = get_logger(logger)
+    cmd = ['conda', 'run', '-n', 'isce2', 'topsApp.py', 'topsApp.xml']
+    
+    process = subprocess.Popen(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    
+    for line in iter(process.stdout.readline, ''):
+        log.debug(line.strip())
+    
+    process.stdout.close()
+    return process.wait()
 
-                    msg = f"=== topsApp for Pair {i+1} complete at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="
-                    log_and_print(f"{msg:=^80}\n")
-                    log_and_print(f"Offsets computed: {i+1} of {num_pairs}")
-                    if i+1 < num_pairs: 
-                        log_and_print(f"Continuing to pair {i+2}")
-                    
-                    return_codes.append(return_code)
-                else:
-                    log_and_print(f"TopsApp processing pair {i} failed with return code: {return_code}")
-                    if i+1 < num_pairs: log_and_print(f"Continuing to pair {i+2}")
-                    log_and_print(f"Press Ctrl + C to cancel")
-                    return_codes.append(return_code)
+    
+def process_pair(ref_safe, sec_safe, dem_file, parent_dir, logger=None):
+    log = get_logger(logger)
+    
+    dates = [date_from_safe(sf) for sf in (ref_safe, sec_safe)]
+    pair_dir = os.path.join(parent_dir, "-".join(dates))
+    os.makedirs(pair_dir, exist_ok=True)
+    os.chdir(pair_dir)
+    log.info(f"  Working in: {pair_dir}")
 
-            except Exception as e:
-                log_and_print(f"Error during processing: {e}")
-                return False
+    n_passes = compute_n_passes(*dates)
+    write_xml_files(ref_safe, sec_safe, dem_file, n_passes)
+    log.info("  Created reference.xml, secondary.xml, topsApp.xml")
+    
+    return run_topsapp_cmd(log)
 
-        if all((return_code == 0) for return_code in return_codes):
-            log_and_print('Removing final SAFE file:')
-            remove_safe(f'{parent_dir}/{safe_files[-1]}')
-            log_and_print(f'Removed SAFE file: {safe_files[-1]}\n')
 
-            log_and_print(f"Total Time: {round(time.time()-start_time)} seconds")
-            return True
+def run_topsapp():
+    # . . Setup steps
+    setup_environment()
+    log = setup_logger()
+    parent_dir = os.getcwd()
 
-        else:
+    log.info(f"Working directory: {parent_dir}")
+    log.info(f"ISCE_HOME:  {os.environ.get('ISCE_HOME')}")
+    log.info(f"ISCE_STACK: {os.environ.get('ISCE_STACK')}")
+
+    safe_files = sorted(glob.glob('SAFE/*.zip'))
+    if len(safe_files) < 2:
+        log.error(f"Need at least 2 SAFE files, found {len(safe_files)}")
+        return False
+
+    # Fixed DEM path
+    dem_file = "../dem/REMA_10m_shirase.bil"  # Update to your DEM filename 
+    log.info(f"DEM file: {dem_file}")
+    validate_dem(dem_file, log)
+
+    # Number of offsets to compute (1 less than number of images)
+    num_pairs = len(safe_files) - 1
+    log.info(f"Total pairs to process: {num_pairs}")
+
+    # . . Begin processing image pairs
+    return_codes = []
+    start_time = time.time()
+    for i, (ref, sec) in enumerate(zip(safe_files, safe_files[1:]), start=1):
+        msg = f"=== Pair {i} started at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="
+        log.info(f"{msg:=^80}")
+        log.info(f"Pair {i}/{num_pairs}")
+        log.info(f"\tReference: {ref}")
+        log.info(f"\tSecondary: {sec}")
+
+        # . . Run topsApp command
+        try:
+            rc = process_pair(ref, sec, dem_file, parent_dir, log)
+        except Exception as e:
+            log.error(f"Pair {i} raised an exception: {e}")
             return False
+            
+        return_codes.append(rc)
+        
+        if rc == 0:
+            log.info("Cleaning Directory ...")
+            clean_dir(os.getcwd(), log)
+            remove_safe(os.path.join(parent_dir, ref))
+            log.info(f"\tRemoved reference file: {ref}")
 
-def crop_denseoff(file):
+            msg = f"=== Pair {i} complete at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="
+            log.info(f"{msg:=^80}")
+
+            if i < num_pairs: 
+                log.info(f"Continuing to pair {i+1}")
+            
+        else:
+            msg = f"=== Pair {i} failed with return code: {rc} ==="
+            log.warning(f"{msg:^80}")
+            if i < num_pairs: 
+                log.info(f"Continuing to pair {i+1}")
+                log.info(f"Press Ctrl + C to cancel")
+
+        os.chdir(parent_dir)
+
+    if all(rc == 0 for rc in return_codes):
+        remove_safe(os.path.join(parent_dir, safe_files[-1]))
+        log.info(f'Removed SAFE file: {safe_files[-1]}')
+    
+        log.info(f"Total Time: {round(time.time()-start_time)}s")
+        return True
+    
+    else:
+        return False
+
+
+########### POSTPROCESSING ####################################################
+
+def crop_denseoff(file):   
     xmin, xmax = 1.345e6, 1.43e6
     ymin, ymax = 1.646e6, 1.76e6
-    
     da = xr.open_dataarray(file, engine='rasterio').rio.reproject(3031, nodata=np.nan)
-    da = da.sel(x=slice(xmin, xmax), y=slice(ymax, ymin))
-    return da
+    return da.sel(x=slice(xmin, xmax), y=slice(ymax, ymin))
 
-def clean_dir(processing_dir):
-    keep_files = {
-        "isce.log",
-        "reference.xml",
-        "secondary.xml",
-        "topsApp.xml"
-    }
-    keep_dirs = {"merged"}
 
-    # Clean rest of processing directory
-    for entry in os.listdir():
-        full_path = os.path.join(processing_dir, entry)
+def clean_dir(processing_dir, logger=None):
+    log = get_logger(logger)
+    keep_files = ['isce.log', 'reference.xml', 'secondary.xml', 'topsApp.xml']
+    keep_dirs  = ['merged']    
 
-        if os.path.isdir(full_path):
-            if entry not in keep_dirs:
-                print(f"Deleting directory: {full_path}")
-                shutil.rmtree(full_path)
-
+    processing_dir = Path(os.getcwd())
+    
+    # . . Remove unwanted files and directories
+    for entry in processing_dir.iterdir():
+        if entry.is_dir():
+            if entry.name not in keep_dirs:
+                log.info(f"Deleting directory: {entry}")
+                shutil.rmtree(entry)
         else:
-            if entry not in keep_files:
-                print(f"Deleting file: {full_path}")
-                os.remove(full_path)
+            if entry.name not in keep_files:
+                log.info(f"Deleting file: {entry}")
+                entry.unlink()
+    
+    # . . Remove large intermediates from merged/
+    merged = processing_dir / 'merged'
+    for pattern in ['dem*', 'reference*', 'secondary*', '*rdr*', 'filt_dense_offsets.bil*']:
+        for f in merged.glob(pattern):
+            f.unlink(missing_ok=True)
 
-    # Remove DEM, reference and secondary SLCs from merged
-    [os.remove(f) for f in glob.glob(f'{processing_dir}/merged/dem*')]
-    [os.remove(f) for f in glob.glob(f'{processing_dir}/merged/reference*')]
-    [os.remove(f) for f in glob.glob(f'{processing_dir}/merged/secondary*')]
-    [os.remove(f) for f in glob.glob(f'{processing_dir}/merged/*rdr*')]
-    [os.remove(f) for f in glob.glob(f'{processing_dir}/merged/filt_dense_offsets.bil*')]
+    # . . Crop dense offsets, SNR, and COV; save as netCDF and remove .bil* files
+    stems  = ['dense_offsets', 'dense_offsets_snr', 'dense_offsets_cov']
+    
+    for stem in stems:
+        log.info(f"Cropping {stem}...")
+        crop_denseoff(merged / f'{stem}.bil.geo').to_netcdf(merged / f'{stem}.nc')
+        for f in merged.glob(f'{stem}.bil*'):
+            f.unlink()
+        log.info(f"  Done.")
 
-    print("Cropping Offset output files...")
-    # crop dense offsets, save as netCDF, remove .bil*
-    crop_denseoff(
-        os.path.join(processing_dir, 'merged', 'dense_offsets.bil.geo')
-    ).to_netcdf(os.path.join(processing_dir, 'merged', 'dense_offsets.nc'))
-    [os.remove(f) for f in glob.glob(f'{processing_dir}/merged/dense_offsets.bil*')]
-    print("Offsets Cropped")
-
-    print("Cropping SNR files...")
-    # crop SNR, save as nc, remove .bil*
-    crop_denseoff(
-        os.path.join(processing_dir, 'merged', 'dense_offsets_snr.bil.geo')
-    ).to_netcdf(os.path.join(processing_dir, 'merged', 'dense_offsets_snr.nc'))
-    [os.remove(f) for f in glob.glob(f'{processing_dir}/merged/dense_offsets_snr.bil*')]
-    print("SNR Cropped")
-
-    print("Cropping COV files")
-    # crop COV, save as nc, remove .bil*
-    crop_denseoff(
-        os.path.join(processing_dir, 'merged', 'dense_offsets_cov.bil.geo')
-    ).to_netcdf(os.path.join(processing_dir, 'merged', 'dense_offsets_cov.nc'))
-    [os.remove(f) for f in glob.glob(f'{processing_dir}/merged/dense_offsets_cov.bil*')]
-    print('COV Cropped')
-
+        
 def remove_safe(safe_path):
-    if os.path.isdir(safe_path):
-        shutil.rmtree(safe_path)
+    os.remove(safe_path)
+
+########### ENTRY POINT #######################################################
 
 def main():
     print("="*80)
@@ -423,6 +388,7 @@ def main():
     get_orbits()
     os.chdir('..')
 
+    # . . Uncomment to enable AUX file download:
     # print('='*80)
     # print(f"{'Get AUX files':^80}")
     # print('='*80)
@@ -439,6 +405,7 @@ def main():
         return 0
     else:
         print("\nProcessing failed!")
+
 
 if __name__ == "__main__":
     sys.exit(main())
