@@ -83,42 +83,6 @@ def get_aux(ED_username, ED_password):
     subprocess.run(bash_script, shell=True, executable='/bin/bash', check=True)
 
 
-########### ENVIRONMENT #######################################################
-
-def get_envs_root():
-    # Ask conda for its config info
-    result = subprocess.run(
-        ['conda', 'info', '--json'],
-        capture_output=True, text=True
-    )
-    info = json.loads(result.stdout)
-    return info['envs_dirs'][0]  # First/default envs directory
-
-    
-def setup_environment():
-    """Setup ISCE2 environment"""
-    # . . Automatically pull environment root
-    envs_root = get_envs_root()
-
-    isce_home = f"{envs_root}/envs/isce2/lib/python3.11/site-packages/isce"
-    isce_stack = f"{envs_root}/envs/isce2/share/isce2"
-    isce_lib_path = f"{envs_root}/envs/isce2/lib"
-    
-    os.environ['LD_LIBRARY_PATH'] = f"{isce_lib_path}:{os.environ.get('LD_LIBRARY_PATH', '')}"
-    os.environ['ISCE_HOME'] = isce_home
-    os.environ['ISCE_STACK'] = isce_stack
-    os.environ['ISCE_ROOT'] = f"{isce_lib_path}/python3.11/site-packages"
-    
-    path_components = [
-        f"{isce_home}/bin",
-        f"{isce_home}/applications",
-        f"{isce_stack}/topsStack",
-        os.environ.get('PATH', '')
-    ]
-    os.environ['PATH'] = ':'.join(filter(None, path_components))
-    os.environ['OMP_NUM_THREADS'] = '8'
-
-
 ########### HELPERS ###########################################################
 
 def date_from_safe(file):
@@ -145,7 +109,7 @@ def validate_dem(dem_file, logger=None):
         log.info(f"  DEM {label} file: {path} — {status}")
     if not os.path.exists(dem_file + ".xml"):
         log.warning("DEM XML file missing. This may cause processing to fail.")
-        log.warning("Consider using a .dem.wgs84 file with proper metadata.")
+        log.warning("Consider using a .bil.wgs84 file with proper metadata.")
 
 
 ########### XML GENERATION ####################################################
@@ -220,7 +184,7 @@ def run_topsapp_cmd(logger=None):
     """Run topsApp.py, stream output to logger, and return the exit code."""
     # . . Run topsApp to generate offsets
     log = get_logger(logger)
-    cmd = ['conda', 'run', 'topsApp.py', 'topsApp.xml']
+    cmd = ['topsApp.py', 'topsApp.xml']
     
     process = subprocess.Popen(
         cmd,
@@ -254,7 +218,7 @@ def process_pair(ref_safe, sec_safe, dem_file, parent_dir, logger=None):
 
 def run_topsapp():
     # . . Setup steps
-    setup_environment()
+    os.environ['OMP_NUM_THREADS'] = '8'
     log = setup_logger()
     parent_dir = os.getcwd()
 
