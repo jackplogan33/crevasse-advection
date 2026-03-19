@@ -13,24 +13,43 @@ import logging
 import json
 from pathlib import Path
 
+# Module level variables
+cfg = {}
+
 ########### LOGGING ###########################################################
 
 def get_logger(logger=None):
     return logger or logging.getLogger("topsapp")
 
 
-def setup_logger(log_path="topsapp_processing.log"):
+def setup_logger(log_path):
     logger = logging.getLogger("topsapp")
     logger.setLevel(logging.DEBUG)
-    logger.addHandler(logging.FileHandler(log_path))
-    logger.addHandler(logging.StreamHandler())
+    
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setLevel(logging.DEBUG)
+    
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.INFO)  # suppresses DEBUG messages
+
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
     return logger
 
 
 ########### DATA ACQUISITION ##################################################
 
-def get_SAFE(username, password):
+def get_SAFE():
     """Download SAFE Files"""
+    n_files = int(input('Number of files to download: '))
+
+    if n_files == 0:
+        return None, None
+    
+    print('Earth Access login credentials')
+    username = input('  Username: ')
+    password = getpass.getpass('  Password: ')    
+    
     # CreateASF session for downloads
     session = asf.ASFSession()
     try:
@@ -41,21 +60,20 @@ def get_SAFE(username, password):
         print('ASF Login Successful!')
         
     # Shirase AIO
-    aoi = 'POLYGON((38.0336 -69.7358,38.0336 -70.4952,39.6985 -70.4952,39.6985 -69.7358,38.0336 -69.7358))'
-    
-    n_files = int(input('Number of files to download: '))
-    if n_files:
-        opts = {
-            'platform':'S1',
-            'start':str(input('Start Date (YYYY-MM-DD): ')),  # Input start date
-            'processingLevel':'SLC',
-            'frame':[830, 834, 936, 938, 939],
-        }
-        results = asf.search(intersectsWith=aoi, **opts)[-n_files:]
-    
-        print('Downloading SAFE files...')
-        results.download(path='SAFE/', session=user_pass_session)
-        print('SAFE files downloaded.\n')
+    aoi = cfg['aoi']    
+    opts = {
+        'platform':'S1',
+        'start':str(input('Start Date (YYYY-MM-DD): ')),
+        'processingLevel':'SLC',
+        'frame':cfg['frames'],
+    }
+    results = asf.search(intersectsWith=aoi, **opts)[-n_files:]
+
+    print('Downloading SAFE files...')
+    results.download(path='SAFE/', session=user_pass_session)
+    print('SAFE files downloaded.\n')
+
+    return username, password
 
 
 def get_orbits():
@@ -100,16 +118,62 @@ def compute_n_passes(start_dt, end_dt):
 def validate_dem(dem_file, logger=None):
     """Warn if expected DEM sidecar files are missing."""
     log = get_logger(logger)
-    
+    dem_file = cfg['dem_file']
+
     if not dem_file.endswith(".bil"):
         return
+
+    log.info(f"DEM file: {dem_file}")
     for ext, label in [(".xml", "ISCE XML"), (".vrt", "VRT"), ('.aux.xml', 'XML')]:
         path = dem_file + ext
         status = "exists" if os.path.exists(path) else "missing"
-        log.info(f"  DEM {label} file: {path} — {status}")
+        log.info(f"  DEM {label} file: {status}")
+    
     if not os.path.exists(dem_file + ".xml"):
         log.warning("DEM XML file missing. This may cause processing to fail.")
-        log.warning("Consider using a .bil.wgs84 file with proper metadata.")
+        log.warning("Consider using a .bil file with proper metadata.")
+
+
+def load_config(config_path="config.json"):
+    """Load and validate user configuration."""
+    global cfg
+    
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(
+            f"Config file '{config_path}' not found. "
+            f"Copy config.example.json to config.json and fill in your values."
+        )
+    with open(config_path) as f:
+        cfg = json.load(f)
+
+    # . . Validate top-level keys
+    required_top = ["aoi", "frames", "dem_file", "swaths", "region_of_interest", "insar", "ampcor"]
+    missing_top = [k for k in required_top if k not in cfg]
+    if missing_top:
+        raise KeyError(f"Missing required config keys: {missing_top}")
+
+    # . . Validate insar block
+    required_insar = ["do_interferogram", "do_esd", "do_unwrap", "do_unwrap_2stage", "do_ionosphere", "geocode_list"]
+    missing_insar = [k for k in required_insar if k not in cfg["insar"]]
+    if missing_insar:
+        raise KeyError(f"Missing required 'insar' config keys: {missing_insar}")
+
+    # . . Validate ampcor block
+    required_ampcor = ["do_denseoffsets", "window_width", "window_height", "skip_width", "skip_height",
+                       "search_width_per_pass", "search_height_per_pass"]
+    missing_ampcor = [k for k in required_ampcor if k not in cfg["ampcor"]]
+    if missing_ampcor:
+        raise KeyError(f"Missing required 'ampcor' config keys: {missing_ampcor}")
+
+    # . . Coerce bools (JSON true/false -> Python True/False for ISCE2 XML)
+    for key in required_insar:
+        if key != "geocode_list":
+            cfg["insar"][key] = bool(cfg["insar"][key])
+    cfg["ampcor"]["do_denseoffsets"] = bool(cfg["ampcor"]["do_denseoffsets"])
+
+    # . . Coerce dem_file to absolute path once, here, so it's correct everywhere
+    cfg["dem_file"] = os.path.abspath(cfg["dem_file"])
+    return cfg
 
 
 ########### XML GENERATION ####################################################
@@ -124,7 +188,10 @@ def make_scene_xml(role, safe_file, orbit_dir='../orbits'):
 </component>"""
 
 
-def make_topsapp_xml(dem_file, n_passes):
+def make_topsapp_xml(n_passes):
+    amp   = cfg['ampcor']
+    insar = cfg['insar']
+    dem   = cfg['dem_file']
     return f"""<?xml version="1.0" encoding="UTF-8"?>
     <topsApp>
         <component name="topsinsar">
@@ -138,44 +205,39 @@ def make_topsapp_xml(dem_file, n_passes):
                 <catalog>secondary.xml</catalog>
             </component>
     
-            <!-- The swaths to process -->
-            <property name="swaths">[2]</property>
-
-            <!-- The region of interest -->
-            <property name="region of interest">[-70.45441464, -69.88490745, 38.29553816,  39.83817435]</property>
-
-            <!-- DEM for processing -->
-            <property name="demFilename">{dem_file}</property>
+            <property name="swaths">{cfg['swaths']}</property>
+            <property name="region of interest">{cfg['region_of_interest']}</property>
+            <property name="demFilename">{dem}</property>
     
-            <!-- Unset all InSAR processing steps -->
-            <property name="do interferogram">False</property>
-            <property name="do ESD">False</property>
-            <property name="do unwrap">False</property>
-            <property name="do unwrap 2 stage">False</property>
-            <property name="do ionosphere correction">False</property>
-            <property name="geocode list">[]</property>
-    
+            <!-- InSAR processing steps -->
+            <property name="do interferogram">{insar['do_interferogram']}</property>
+            <property name="do ESD">{insar['do_esd']}</property>
+            <property name="do unwrap">{insar['do_unwrap']}</property>
+            <property name="do unwrap 2 stage">{insar['do_unwrap_2stage']}</property>
+            <property name="do ionosphere correction">{insar['do_ionosphere']}</property>
+            <property name="geocode list">{insar['geocode_list']}</property>
+            
             <!-- Parameters for dense offsets -->
-            <property name="do denseoffsets">True</property>
-            <property name="Ampcor window width">256</property>
-            <property name="Ampcor window height">64</property>
-            <property name="Ampcor search window width">{30*n_passes}</property>
-            <property name="Ampcor search window height">{10*n_passes}</property>
-            <property name="Ampcor skip width">44</property>
-            <property name="Ampcor skip height">8</property>
-
+            <property name="do denseoffsets">{amp['do_denseoffsets']}</property>
+            <property name="Ampcor window width">{amp['window_width']}</property>
+            <property name="Ampcor window height">{amp['window_height']}</property>
+            <property name="Ampcor search window width">{amp['search_width_per_pass'] * n_passes}</property>
+            <property name="Ampcor search window height">{amp['search_height_per_pass'] * n_passes}</property>
+            <property name="Ampcor skip width">{amp['skip_width']}</property>
+            <property name="Ampcor skip height">{amp['skip_height']}</property>
+            
         </component>
     </topsApp>"""
 
 
-def write_xml_files(ref_safe, sec_safe, dem_file, n_passes):
+def write_xml_files(ref_safe, sec_safe, n_passes):
     """Write reference.xml, secondary.xml, and topsApp.xml to the current directory."""
     with open("reference.xml", "w") as f:
         f.write(make_scene_xml("reference", ref_safe))
     with open("secondary.xml", "w") as f:
         f.write(make_scene_xml("secondary", sec_safe))
     with open("topsApp.xml", "w") as f:
-        f.write(make_topsapp_xml(dem_file, n_passes))
+        f.write(make_topsapp_xml(n_passes))
 
 
 ########### PROCESSING ####################################################
@@ -200,7 +262,7 @@ def run_topsapp_cmd(logger=None):
     return process.wait()
 
     
-def process_pair(ref_safe, sec_safe, dem_file, parent_dir, logger=None):
+def process_pair(ref_safe, sec_safe, parent_dir, logger=None):
     log = get_logger(logger)
     
     dates = [date_from_safe(sf) for sf in (ref_safe, sec_safe)]
@@ -210,7 +272,7 @@ def process_pair(ref_safe, sec_safe, dem_file, parent_dir, logger=None):
     log.info(f"  Working in: {pair_dir}")
 
     n_passes = compute_n_passes(*dates)
-    write_xml_files(ref_safe, sec_safe, dem_file, n_passes)
+    write_xml_files(ref_safe, sec_safe, n_passes)
     log.info("  Created reference.xml, secondary.xml, topsApp.xml")
     
     return run_topsapp_cmd(log)
@@ -219,22 +281,19 @@ def process_pair(ref_safe, sec_safe, dem_file, parent_dir, logger=None):
 def run_topsapp():
     # . . Setup steps
     os.environ['OMP_NUM_THREADS'] = '8'
-    log = setup_logger()
+    log = setup_logger('./topsapp_processing.log')
     parent_dir = os.getcwd()
 
-    log.info(f"Working directory: {parent_dir}")
-    log.info(f"ISCE_HOME:  {os.environ.get('ISCE_HOME')}")
-    log.info(f"ISCE_STACK: {os.environ.get('ISCE_STACK')}")
+    log.info(f"Working directory: {parent_dir}\n")
+    # log.info(f"ISCE_HOME:  {os.environ.get('ISCE_HOME')}")
+    # log.info(f"ISCE_STACK: {os.environ.get('ISCE_STACK')}")
 
     safe_files = sorted(glob.glob('SAFE/*.zip'))
     if len(safe_files) < 2:
         log.error(f"Need at least 2 SAFE files, found {len(safe_files)}")
         return False
 
-    # Fixed DEM path
-    dem_file = "../dem/REMA_10m_shirase.bil"  # Update to your DEM filename 
-    log.info(f"DEM file: {dem_file}")
-    validate_dem(dem_file, log)
+    validate_dem(log)
 
     # Number of offsets to compute (1 less than number of images)
     num_pairs = len(safe_files) - 1
@@ -244,15 +303,14 @@ def run_topsapp():
     return_codes = []
     start_time = time.time()
     for i, (ref, sec) in enumerate(zip(safe_files, safe_files[1:]), start=1):
-        msg = f"=== Pair {i} started at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="
+        msg = f"=== Pair {i}/{num_pairs} started at {time.strftime('%Y-%m-%d %H:%M:%S')} ==="
         log.info(f"{msg:=^80}")
-        log.info(f"Pair {i}/{num_pairs}")
         log.info(f"\tReference: {ref}")
         log.info(f"\tSecondary: {sec}")
 
         # . . Run topsApp command
         try:
-            rc = process_pair(ref, sec, dem_file, parent_dir, log)
+            rc = process_pair(ref, sec, parent_dir, log)
         except Exception as e:
             log.error(f"Pair {i} raised an exception: {e}")
             return False
@@ -345,15 +403,11 @@ def main():
     print(f"{'ISCE2 Run script':^80}")
     print("="*80)
 
-    # Get EarthAccess credentials
-    print('Earth Access login credentials')
-    username = input('  Username: ')
-    password = getpass.getpass('  Password: ')
-
+    cfg = load_config()
     print('='*80)
     print(f"{'Get SAFE files':^80}")
     print('='*80)
-    get_SAFE(username, password)
+    username, password = get_SAFE()
 
     print('='*80)
     print(f"{'Get Orbit files':^80}")
@@ -379,7 +433,7 @@ def main():
         return 0
     else:
         print("\nProcessing failed!")
-
+        return 1
 
 if __name__ == "__main__":
     sys.exit(main())

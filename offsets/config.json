@@ -1,0 +1,24 @@
+{
+    "aoi": "POLYGON((38.0336 -69.7358,38.0336 -70.4952,39.6985 -70.4952,39.6985 -69.7358,38.0336 -69.7358))",
+    "frames": [830, 834, 936, 938, 939],
+    "dem_file": "./dem/REMA_10m_shirase.bil",
+    "swaths": [2],
+    "region_of_interest": [-70.45441464, -69.88490745, 38.29553816, 39.83817435],
+    "insar": {
+        "do_interferogram": false,
+        "do_esd": false,
+        "do_unwrap": false,
+        "do_unwrap_2stage": false,
+        "do_ionosphere": false,
+        "geocode_list": []
+    },
+    "ampcor": {
+        "do_denseoffsets":true,
+        "window_width": 256,
+        "window_height": 64,
+        "skip_width": 44,
+        "skip_height": 8,
+        "search_width_per_pass":30,
+        "search_height_per_pass":10
+    }
+}
