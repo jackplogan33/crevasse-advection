@@ -50,10 +50,15 @@ conda activate isce2
 source ~/.bashrc
 ```
 
-> Make sure you activate the environment first. This ensures that the `$CONDA_PREFIX` is pointing to the isce environment, not the default environment
->
+> [!IMPORTANT]
+> Make sure you activate the environment first. 
+> This ensures that the `$CONDA_PREFIX` is pointing to the isce environment, not the default environment.
+> 
+> This script edits the activation and deactivation scripts to make the ISCE scripts command line accessible
+
+> [!NOTE]
 > We have had issues with the proj variables during setup in community-maintained images.
-> To ensure the right paths are set, they need to be explicity written.
+> To ensure the right paths are set, they need to be explicity written when creating the kernel
 
 In theory, this should work. To test, you can run:
 ```bash
