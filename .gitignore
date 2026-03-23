@@ -1,13 +1,18 @@
-# 
+# Keep your earthdata credentials private
 fetchOrbit.py
-*.SAFE/
+
+# Hide input and processing files
 *.SAFE
+*.SAFE/
 *.zip
 *.EOF
 *.log
 
+# Hide individual offset folders
 20*-20*/
+
+# Hidden folders
 .ipynb_checkpoints/
 __pycache__/
 .copernicus_dataspace_token
-dem/
+.virtual_documents/
