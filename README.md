@@ -4,6 +4,10 @@ Using the ISCE2 interferometric processor, we perform pixel offset tracking to d
 This workflow is cloud native and is designed to process multiple offsets in series, exploiting the amplitude of a SAR image. 
 It can easily be applied to create your own surface velocity timeseries anywhere with adequate Sentinel-1 coverage.
 
+This workflow is the first step in a larger pipeline: surface velocities derived from 
+pixel offset tracking are used downstream to compute ice stresses and observe crevasse 
+advection from a Lagrangian reference frame.
+
 More information will be detailed in our forthcoming publication.
 
 ## Installation
@@ -27,6 +31,10 @@ git clone https://github.com/jackplogan33/crevasse-advection/
 ```
 That's it. Now you can run all the notebooks.
 
+> [!NOTE] 
+> This image has jupyter-keepalive. 
+> This allows you to keep your JupyterHub session active while running a long process, like 20 hours of offsets.
+
 ### Running locally or a community image
 This process is a little bit more involved. 
 There are many conflicting environment variables that need to be specified for everything to run properly.
@@ -47,18 +55,16 @@ conda env create -f environment.yml
 ```bash
 conda activate isce2
 ./setup.sh
-source ~/.bashrc
+
+conda deactivate
+conda activate isce2
 ```
 
 > [!IMPORTANT]
 > Make sure you activate the environment first. 
-> This ensures that the `$CONDA_PREFIX` is pointing to the isce environment, not the default environment.
+> This ensures that the `$CONDA_PREFIX` is pointing to the isce2 environment, not the default environment.
 > 
-> This script edits the activation and deactivation scripts to make the ISCE scripts command line accessible
-
-> [!NOTE]
-> We have had issues with the proj variables during setup in community-maintained images.
-> To ensure the right paths are set, they need to be explicity written when creating the kernel
+> This script edits the activation and deactivation scripts to make the ISCE scripts command line accessible.
 
 In theory, this should work. To test, you can run:
 ```bash
@@ -70,14 +76,26 @@ When running the notebooks, make sure you have selected the "ISCE2" kernel.
 
 
 ## Usage
-We have written a series of notebooks to explain the setup, run, and postprocessing steps. 
 
-`01-ISCE2_setup.ipynb`: <br>
-Download the DEM for the region of interest and ensure the file structure is properly setup to run ISCE2 in a contained file structure.
+We have written a series of notebooks to explain the setup, run, and postprocessing steps.
 
-`02-run_topsapp.ipynb` <br>
-Download the necessary input files for a single offset and write the XML files for topsApp. 
-This notebook explains each of the steps occuring in the run script `./offsets/run_isce2.py`.
+**`01-ISCE2_setup.ipynb`** *(required)* <br>
+Download the DEM for the region of interest and ensure the file structure is properly set up to run ISCE2 in a contained file structure.
 
-`03-postprocess_offsets` <br>
+**`02-run_topsapp.ipynb`** <br>
+Download the necessary input files for a single offset and write the XML files for topsApp. This notebook explains each of the steps occurring in the run script `./offsets/run_isce2.py`.
+
+**`03-postprocess_offsets.ipynb`** <br>
 Turn the offsets from azimuth-range displacements in pixels to ground velocity in xy-coordinates.
+This notebook walks through the steps and parameters in `./offsets/postprocces.py`.
+
+> [!NOTE] 
+> Only notebook one is required. The remaining steps can be run from the python scripts instead. 
+> 
+> That said, running through the notebooks first is a good way to get familiar with the workflow and fine tuning parameters before using the CLI.
+
+## Citation
+
+If you use code or data from this repository, please cite both the manuscript and the code:
+
+> **Paper citation:** [tbd]
