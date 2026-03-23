@@ -2,6 +2,7 @@
 
 ACTIVATE_SCRIPT="$CONDA_PREFIX/etc/conda/activate.d/isce2-activate.sh"
 DEACTIVATE_SCRIPT="$CONDA_PREFIX/etc/conda/deactivate.d/isce2-deactivate.sh"
+PROJ_HOME="$CONDA_PREFIX/share/proj"
 
 # --- Patch activation script ---
 if [[ ! -f "$ACTIVATE_SCRIPT" ]]; then
