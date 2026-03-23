@@ -7,6 +7,9 @@ fetchOrbit.py
 *.zip
 *.EOF
 *.log
+offsets/dem/*
+!offsets/dem/.gitkeep
+
 
 # Hide individual offset folders
 20*-20*/
