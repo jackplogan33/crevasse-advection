@@ -1,165 +1,241 @@
 import numpy as np
 import xarray as xr
-from scipy.ndimage import median_filter, laplace
 import sys
+import glob
+import json
+import argparse
 
-def resave_offset_nc(filebase):
-    """Read the netCDF files produced by run_isce2.py and stack multiple offsets.
-    Offsets are merged along a new dimension names 'mid_date', which is the midpoint between the two dates in the folder name."""
-    # . . Interpolation params
-    xmin, xmax, nx = 1.345e6+50, 1.43e6-50, 1699
-    ymin, ymax, ny = 1.646e6+50, 1.76e6-50, 2279
+from joblib import Parallel, delayed
+from pathlib import Path
+from scipy.ndimage import median_filter
+from skimage.restoration.inpaint import inpaint_biharmonic
 
+########### STACKING ##########################################################
+
+def resave_offset_nc(filebase, xmin, xmax, nx, ymin, ymax, ny, chunk_size=34):   
+    """
+    Read per-pair netCDF offset files produced by run_isce2.py and stack them
+    into a single dataset along a 'mid_date' time dimension.
+
+    Offsets are normalised to pixels/day by dividing by the number of days
+    between the two acquisition dates encoded in the directory name
+    (e.g. 20200101-20200113).
+
+    Parameters
+    ----------
+    filebase : str
+        Filename to glob for inside each 20*-20*/merged/ directory.
+        If 'dense_offsets.nc', band_data is unpacked into 'azimuth'/'range'
+        and divided by the temporal baseline. Otherwise the file is passed
+        through unchanged (e.g. SNR, COV).
+    xmin, xmax, nx : float, float, int
+        Target x-axis extent and number of grid points.
+    ymin, ymax, ny : float, float, int
+        Target y-axis extent and number of grid points.
+    chunk_size : int
+        Number of offsets to merge in each intermediate batch before the
+        final merge, to avoid memory spikes on large stacks.
+    """
     # . . Get all offsets in local directory
-    offset_dirs = glob.glob('20*-20*/merged/'+filebase)
+    offset_dirs = sorted(glob.glob(f'20*-20*/merged/{filebase}'))
+    if not offset_dirs:
+        raise FileNotFoundError(         
+            f"No directories matching '20*-20*/merged/{filebase}' found. "
+            "Are you running from the correct working directory?"
+        )
+
+    x_grid = np.linspace(xmin, xmax, nx)
+    y_grid = np.linspace(ymin, ymax, ny)
 
     # . . Read each offset and append
     offsets = []
     for i, offset_dir in enumerate(sorted(offset_dirs)):
-        print(f"Opening offset {i+1}/{len(offset_dirs)}")
+        print(f"  Opening offset {i+1}/{len(offset_dirs)}: {offset_dir}")
 
         # . . Calculate mid date of S1 pass
-        # Get start and end dates from root directory
-        month_dir = offset_dir.split('/')[0]
-        start_str, end_str = month_dir.split('-')
+        # Parse acquisition dates from directory name (format: YYYYMMDD-YYYYMMDD)
+        date_pair = Path(offset_dir).parts[0]          # e.g. '20200101-20200113'
+        start_str, end_str = date_pair.split('-')
         start = np.datetime64(f'{start_str[:4]}-{start_str[4:6]}-{start_str[6:]}')
-        end = np.datetime64(f'{end_str[:4]}-{end_str[4:6]}-{end_str[6:]}')
-        # Calculate number of days between pass (typically 12)
-        days = (end - start).astype('int64')
-        
-        # Calculate middle date
-        mid_date = start + (end - start) / 2
+        end   = np.datetime64(f'{end_str[:4]}-{end_str[4:6]}-{end_str[6:]}')
+        days  = (end - start).astype('int64')          # temporal baseline in days
+        mid_date = start + (end - start) // 2
 
         # . . Open dataset and interpolate to grid
         ds = xr.open_dataset(offset_dir, engine='rasterio')
-        ds_interp = ds.interp(  #### Do I need to do this?
-            coords={
-            'x':np.linspace(xmin, xmax, nx),
-            'y':np.linspace(ymin, ymax, ny)
-            },
+        ds_interp = ds.interp(
+            coords={'x':x_grid, 'y':y_grid},
             method='nearest'
-        )
-        
-        # Make time dimension
-        ds_interp = ds_interp.expand_dims({'mid_date':[mid_date]})
+        ).expand_dims({'mid_date':[mid_date]})
 
         # . . If offsets, unpack bands and divide by time
         if filebase == 'dense_offsets.nc':
-            # Unpack bands to variable, remove 'band_data'
+            # band 1 = azimuth (along-track), band 2 = range (across-track)
             ds_new = ds_interp.drop_vars(['band_data', 'band'])
             ds_new['azimuth'] = ds_interp['band_data'].sel(band=1).drop_vars('band')
             ds_new['range']   = ds_interp['band_data'].sel(band=2).drop_vars('band')
 
-            # Return offets as meters per day
-            offsets.append(ds_new.where(ds_new == -1e4, ds_new / days))
-
-        # . . Append interpolated values for others
+            # Replace the ISCE2 nodata sentinel (-1e4) with NaN, then normalise
+            # by the temporal baseline to get pixels per day
+            offsets.append(ds_new.where(ds_new != -1e4).assign(
+                azimuth=lambda d: d['azimuth'] / days,
+                range=lambda d: d['range'] / days,
+            ))
         else:
-            # Return SNR and COV unchanged
             offsets.append(ds_interp)
 
-    # . . Merge offsets in quarters
-    offsets_quarters = [xr.merge(offsets[i:i+34]) for i in range(0, 134, 34)]
-
-    # . . Merge final 4 parts
-    print('Merging Offsets')
-    offset_ds = xr.merge(offsets_quarters).assign_attrs({
-        'grid_resolution_meters':50,
-        'CRS':'EPSG:3031'
+    # . . Merge in batches to keep peak memory manageable
+    print(f'  Merging {len(offsets)} offsets in batches of {chunk_size}...')
+    batches = [
+        xr.merge(offsets[i:i+chunk_size], compat='no_conflicts', join='outer')
+        for i in range(0, len(offsets), chunk_size)
+    ]
+    offset_ds = xr.merge(batches).assign_attrs({
+        'grid_resolution_meters': int(round((xmax - xmin) / (nx - 1))),
+        'CRS': 'EPSG:3031',
+        'temporal_units': 'pixels/day'
     })
 
     # . . Write to disk
-    print('Writing to disk')
-    offset_ds.to_netcdf('./'+filebase)
+    outpath = f'./{filebase}'
+    print(f'  Writing to {outpath}')
+    offset_ds.to_netcdf(outpath)
 
-def laplacian_infill(arr, mask, max_iter=2000, tol=1e-4, mode='nearest'):
-    """"""
-    filled = arr.copy()
 
-    for i in range(max_iter):
-        prev = filled.copy()
-        lap = laplace(filled, mode=mode, axes=[-2, -1])
-        filled[mask] += (0.2 * lap[mask])
-        
-        # Compute relative difference
-        diff = np.linalg.norm((filled - prev)[mask]) / (np.linalg.norm(filled[mask]) + 1e-12)
+########### CLEANING ##########################################################
 
-        # Print convergence info (overwriting previous line)
-        print(f"\rIteration {i+1}/{max_iter}, diff = {diff:.2e}", end="")
-        sys.stdout.flush()
+def offset_cleaning(
+    ds: xr.Dataset,
+    window_size: int = 80,
+    mad_mult: float = 15.0,
+    az_bounds: tuple[float, float] = (-0.125, 0.55),
+    rg_bounds: tuple[float, float] = (-0.58, 1.75),
+    filter_size: tuple[int, int, int] = (3, 7, 7), 
+) -> xr.Dataset:
+    """
+    Mask and inpaint outliers in a stacked offset dataset.
 
-        if diff < tol:
-            print(f"\nConverged after {i+1} iterations.")
-            break
-    else:
-        print(f"\nMax iterations reached. Final diff = {diff:.2e}")
+    Two masking strategies are combined with a logical OR:
+      1. Hard threshold — removes offsets outside physically plausible bounds.
+         Defaults correspond to ~1.5 m/day in azimuth and ~4.0 m/day in range
+         for a 12-day Sentinel-1 pair.
+      2. MAD outlier filter — for each timestep, computes the median absolute
+         deviation of (data - local_median) over the spatial domain and masks
+         pixels exceeding `mad_mult` times that value.
 
-    return filled
+    Masked pixels are reconstructed using biharmonic inpainting (∇⁴u = 0),
+    applied independently to each 2-D time slice.
 
-def offset_cleaning(ds, window_size=80, mult=5):
-    print('Masking by Treshold... ')
-    # Make mask for Thresholding
-    az_mask = (ds['azimuth'] > (.55)) | (ds['azimuth'] < (-.125))
-    rg_mask = (ds['range'] > (1.75)) | (ds['range'] < (-.58))
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset with variables 'azimuth' and 'range', dims (mid_date, y, x).
+    window_size : int
+        Side length (pixels) of the median filter kernel (~4 km at 50 m res).
+    mad_mult : float
+        MAD threshold multiplier. Lower = more aggressive masking.
+    az_bounds : (float, float)
+        (min, max) hard threshold for azimuth offsets in pixels/day.
+    rg_bounds : (float, float)
+        (min, max) hard threshold for range offsets in pixels/day.
+    filter_size : (int, int, int)
+        (time, y, x) median filter size to compute after all cleaning steps
+
+    Returns
+    -------
+    xr.Dataset
+        Cleaned dataset with the same structure as `ds`.
+    """
+    # . . Hard Threshold mask
+    print('  Applying treshold mask...')
     thresh_mask = xr.Dataset({
-        'azimuth':az_mask,
-        'range':rg_mask
+        'azimuth': (ds['azimuth'] < az_bounds[0]) | (ds['azimuth'] > az_bounds[1]),
+        'range':   (ds['range']   < rg_bounds[0]) | (ds['range']   > rg_bounds[1])
     })
-    
-    print('Applying Large Median Filter...')
-    # Compute large median filter over spatial dimensions (4 km square window)
+
+    # . . Local MAD mask
+    print('  Computing local median (large kernel)...')
+    # Braodcast over time axis
     med = xr.apply_ufunc(
         median_filter,
         ds,
-        kwargs={'size':window_size, 'axes':[-2, -1]}
+        kwargs={'size': window_size, 'axes':[1, 2]}
     )
     
-    print('Masking by MAD...')
-    # Compute localized Median Absolute Deviation for each timestep
+    print('  Applying MAD mask...')
+    # MAD is computed per-timestep over the full spatial domain
     diff = np.abs(ds - med)
     mad = diff.median(['x', 'y'], skipna=True)
+    mad_mask = diff > (mad_mult * mad)
     
-    # Threshold at 5 times the MAD
-    threshold = mult * mad
-    mad_mask = (diff > threshold)
-    
-    # Combine MAD and threshold Masks
+    # . . Combine Masks
     mask = mad_mask + thresh_mask
+
+    print('  Inpainting NaNs')
+    # . . Biharmonic inpainting across time dimension
+    ds_inpaint = xr.apply_ufunc(
+        inpaint_slice,
+        ds,
+        mask,
+        input_core_dims=[['y', 'x'], ['y', 'x']],
+        output_core_dims=[['y', 'x']],
+        vectorize=True,   # loops over mid_date, calls inpaint_biharmonic once per timestep
+    )
+
+    # . . 3D median filter
+    print('  Applying 3D median filter...')
+    ds_filtered = xr.apply_ufunc(
+        median_filter,
+        ds_inpaint,
+        kwargs={'size': filter_size}
+    )
+    return ds_filtered
+
+
+def inpaint_slice(data, mask):
+    return inpaint_biharmonic(data.copy(), mask.copy())    
     
-    # Mask values, replace with median filter result
-    ds_masked = ds.where(~mask, med)
-    
-    print('Harmonic Inpainting...')
-    lap_kwargs = {'tol':1e-4, 'max_iter':2000, 'mode':'nearest'}
-    # Start Infill of values to new dataset
-    ds_filled = ds_masked.copy()
-    for var in ds_filled.data_vars:
-        ds_filled[var] = xr.apply_ufunc(
-            laplacian_infill,
-            ds_filled[var],
-            mask[var],
-            kwargs=lap_kwargs
-        )
 
-    return ds_filled
+########### COORDINATE CONVERSION #############################################
 
-def convert_coords(ds):
-    az = ds['azimuth']
-    rg = ds['range']
-    # Multiply offsets by resolution to get disp in meters
-    az *= 14.1
-    rg *= 2.3 / np.sin(np.radians(38.3))  # Ground-range (only horizontal)
+def convert_coords(ds, az_res=14.1, rg_res=2.3, inc_angle=38.3, heading=0.0097):
+    """
+    Convert pixel offsets (pixels/day) to surface velocity (m/year) in
+    a map-projected coordinate system (EPSG:3031).
 
-    # S1 orbit heading with reference to EPSG:3031 grid
-    heading = 0.0097
+    Steps
+    -----
+    1. Scale azimuth by azimuth pixel spacing and range by the ground-range
+       pixel spacing (range spacing / sin(incidence angle)).
+    2. Rotate from SAR geometry (azimuth/range) into map coordinates (x/y)
+       using the satellite heading angle.
+    3. Convert m/day to m/year.
 
-    # Coordinate transformation
-    x_offsets = np.cos(heading) * rg - np.sin(heading) * az
-    y_offsets = np.cos(heading) * az + np.sin(heading) * rg
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Cleaned offsets with variables 'azimuth' and 'range' in pixels/day.
+    az_res : float
+        Azimuth pixel spacing in metres (Sentinel-1 IW: ~14.1 m).
+    rg_res : float
+        Slant-range pixel spacing in metres (Sentinel-1 IW: ~2.3 m).
+    inc_angle : float
+        Radar incidence angle in degrees (used to project slant → ground range).
+    heading : float
+        Satellite heading in radians relative to the EPSG:3031 y-axis.
 
-    # Convert to meters / year
-    vx = x_offsets * 365
-    vy = y_offsets * 365
+    Returns
+    -------
+    xr.Dataset
+        Dataset with variables 'vx', 'vy' (m/year) and 'vv' (speed, m/year).
+    """
+    # Convert pixel offsets to meters/day
+    az_m = ds['azimuth'] * az_res
+    rg_m = ds['range']   * rg_res / np.sin(np.radians(inc_angle))  # Ground-range (only horizontal)
+
+    # Rotate from SAR geometry to map-projected x/y
+    vx = (np.cos(heading) * rg_m - np.sin(heading) * az_m) * 365
+    vy = (np.cos(heading) * az_m + np.sin(heading) * rg_m) * 365
     
     # Unit conversion to velocity, saved in dataset
     return xr.Dataset({
@@ -168,19 +244,94 @@ def convert_coords(ds):
         'vv':np.sqrt((vx ** 2) + (vy ** 2))
     })
 
-if __name__ == '__main__':
-    # . . Stack all offsets, interpolate sampling
-    fileroots = ['dense_offsets.nc', 'dense_offsets_snr.nc', 'dense_offsets_cov.nc']
-    for fr in fileroots:
-        resave_offset_nc(fr)
+
+########### CLI ###############################################################
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Postprocess Sentinel-1 dense offsets: stack, clean, convert to velocity.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument('config', type=str,
+                        help='Path to a JSON config file.')
+    return parser.parse_args()
+ 
     
+def load_config(path):
+    """Load a JSON config and return the postprocessing sub-section."""
+    with open(path) as f:
+        cfg = json.load(f)
+    return cfg.get('postprocessing', {})
+
+if __name__ == '__main__':
+    args = parse_args()
+    cfg = load_config(args.config)
+
+    # . . Top-level flags
+    stack       = cfg.get('stack', False)
+    input_file  = cfg.get('input', None)
+    output_file = cfg.get('output', 'filt_dense_offsets.nc')
+
+    # . . Cleaning params
+    cleaning        = cfg.get('cleaning', {})
+    window          = int(cleaning.get('window_size', 80))
+    mad_mult        = int(cleaning.get('mad_mult', 15.0))
+    az_bounds       = tuple(cleaning.get('az_bounds', [-0.125, 0.55]))
+    rg_bounds       = tuple(cleaning.get('rg_bounds', [-0.58,  1.75]))
+    temporal_filter = tuple(cleaning.get('temporal_filter', [3, 7, 7]))
+
+    # . . Velocity params
+    vel_cfg     = cfg.get('velocity', {})
+    do_velocity = vel_cfg.get('do_velocity', True)
+    vel_file    = vel_cfg.get('output', 'velocity.nc')
+    az_res      = vel_cfg.get('az_res',    14.1)
+    rg_res      = vel_cfg.get('rg_res',    2.3)
+    inc_angle   = vel_cfg.get('inc_angle', 38.3)
+    heading     = vel_cfg.get('heading',   0.0097)
+
+    # . . Grid params (only needed for stacking)
+    grid        = cfg.get('grid', {})
+    
+    if not stack and input_file is None:
+        print("Error: config must specify 'stack: true', an 'input' file, or both.")
+        sys.exit(1)
+        
+    if stack:
+        print('Stacking offset pairs...')
+        fileroots = ['dense_offsets.nc', 'dense_offsets_snr.nc', 'dense_offsets_cov.nc']
+        for fr in fileroots:
+            resave_offset_nc(fr,
+                xmin=grid.get('xmin', 1.345e6+50),
+                xmax=grid.get('xmax', 1.43e6-50),
+                nx=grid.get('nx', 1699),
+                ymin=grid.get('ymin', 1.646e6+50),
+                ymax=grid.get('ymax', 1.76e6-50),
+                ny=grid.get('ny', 2279),
+            )
+
     # . . Read in dataset of all offsets
-    ds = xr.open_dataset('./dense_offsets.nc')
+    input_file = input_file or './dense_offsets.nc'
+    print(f'Reading offsets from {input_file}...')
+    ds = xr.open_dataset(input_file)
 
-    # . . Send offsets for cleaning
-    ds_clean = offset_cleaning(ds)
-
-    print('Writing cleaned offsets to disk...')
-    ds_clean.to_netcdf('./filt_dense_offsets.nc')
-
-    vel = convert_coords(ds_coords)
+    print('Cleaning offsets...')
+    ds_clean = offset_cleaning(
+        ds, 
+        window_size=window, 
+        mad_mult=mad_mult,
+        az_bounds=az_bounds, 
+        rg_bounds=rg_bounds,
+        filter_size=temporal_filter
+    )    
+    print(f'Writing cleaned offsets to {output_file}...')
+    ds_clean.to_netcdf(output_file)
+    
+    if do_velocity:
+        print(f'Converting to velocity {vel_file}...')
+        convert_coords(
+            ds_clean, 
+            az_res=az_res, 
+            rg_res=rg_res,
+            inc_angle=inc_angle, 
+            heading=heading
+        ).to_netcdf(vel_file)
