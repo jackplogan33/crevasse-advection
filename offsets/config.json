@@ -1,9 +1,12 @@
 {
-    "aoi": "POLYGON((38.0336 -69.7358,38.0336 -70.4952,39.6985 -70.4952,39.6985 -69.7358,38.0336 -69.7358))",
-    "frames": [830, 834, 936, 938, 939],
-    "dem_file": "./dem/REMA_10m_shirase.bil",
-    "swaths": [2],
-    "region_of_interest": [-70.45441464, -69.88490745, 38.29553816, 39.83817435],
+    "scene": {
+        "aoi": "POLYGON((38.0336 -69.7358,38.0336 -70.4952,39.6985 -70.4952,39.6985 -69.7358,38.0336 -69.7358))",
+        "frames": [830, 834, 936, 938, 939],
+        "dem_file": "./dem/REMA_10m_shirase.bil",
+        "swaths": [2],
+        "region_of_interest": [-70.45441464, -69.88490745, 38.29553816, 39.83817435],
+        "polarization": "hh"
+    },
     "insar": {
         "do_interferogram": false,
         "do_esd": false,
@@ -20,5 +23,15 @@
         "skip_height": 8,
         "search_width_per_pass":30,
         "search_height_per_pass":10
+    },
+    "crop": {
+        "xmin": 1345000,
+        "xmax": 1430000,
+        "ymin": 1646000,
+        "ymax": 1760000,
+        "output_epsg": 3031
+    },
+    "compute": {
+        "omp_num_threads": 8
     }
 }

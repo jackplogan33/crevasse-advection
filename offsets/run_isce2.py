@@ -60,12 +60,12 @@ def get_SAFE():
         print('ASF Login Successful!')
         
     # Shirase AIO
-    aoi = cfg['aoi']    
+    aoi = cfg['scene']['aoi']    
     opts = {
         'platform':'S1',
         'start':str(input('Start Date (YYYY-MM-DD): ')),
         'processingLevel':'SLC',
-        'frame':cfg['frames'],
+        'frame':cfg['scene']['frames'],
     }
     results = asf.search(intersectsWith=aoi, **opts)[-n_files:]
 
@@ -118,7 +118,7 @@ def compute_n_passes(start_dt, end_dt):
 def validate_dem(dem_file, logger=None):
     """Warn if expected DEM sidecar files are missing."""
     log = get_logger(logger)
-    dem_file = cfg['dem_file']
+    dem_file = cfg['scene']['dem_file']
 
     if not dem_file.endswith(".bil"):
         return
@@ -147,10 +147,18 @@ def load_config(config_path="config.json"):
         cfg = json.load(f)
 
     # . . Validate top-level keys
-    required_top = ["aoi", "frames", "dem_file", "swaths", "region_of_interest", "insar", "ampcor"]
+    required_top = ["scene", "insar", "ampcor", "crop", "compute"]
     missing_top = [k for k in required_top if k not in cfg]
     if missing_top:
         raise KeyError(f"Missing required config keys: {missing_top}")
+
+    # . . Validate scene block
+    required_scene = ["aoi", "frames", "dem_file", "swaths", "region_of_interest", "polarization"]
+    missing_scene = [k for k in required_scene if k not in cfg["scene"]]
+    if missing_scene:
+        raise KeyError(f"Missing required 'scene' config keys: {missing_scene}")
+    # Coerce dem_file to absolute path so it's correct everywhere
+    cfg["scene"]["dem_file"] = os.path.abspath(cfg["scene"]["dem_file"])
 
     # . . Validate insar block
     required_insar = ["do_interferogram", "do_esd", "do_unwrap", "do_unwrap_2stage", "do_ionosphere", "geocode_list"]
@@ -165,14 +173,18 @@ def load_config(config_path="config.json"):
     if missing_ampcor:
         raise KeyError(f"Missing required 'ampcor' config keys: {missing_ampcor}")
 
-    # . . Coerce bools (JSON true/false -> Python True/False for ISCE2 XML)
-    for key in required_insar:
-        if key != "geocode_list":
-            cfg["insar"][key] = bool(cfg["insar"][key])
-    cfg["ampcor"]["do_denseoffsets"] = bool(cfg["ampcor"]["do_denseoffsets"])
+    # . . Validate crop block
+    required_crop = ["xmin", "xmax", "ymin", "ymax", "output_epsg"]
+    missing_crop = [k for k in required_crop if k not in cfg["crop"]]
+    if missing_crop:
+        raise KeyError(f"Missing required 'crop' config keys: {missing_crop}")
 
-    # . . Coerce dem_file to absolute path once, here, so it's correct everywhere
-    cfg["dem_file"] = os.path.abspath(cfg["dem_file"])
+    # . . Validate compute block
+    required_compute = ["omp_num_threads"]
+    missing_compute = [k for k in required_compute if k not in cfg["compute"]]
+    if missing_compute:
+        raise KeyError(f"Missing required 'compute' config keys: {missing_compute}")
+
     return cfg
 
 
@@ -184,14 +196,14 @@ def make_scene_xml(role, safe_file, orbit_dir='../orbits'):
     <property name="safe">['../{safe_file}']</property>
     <property name="output directory">{role}</property>
     <property name="orbit directory">{orbit_dir}</property>
-    <property name="polarization">hh</property>
+    <property name="polarization">{cfg['scene']['polarization']}</property>
 </component>"""
 
 
 def make_topsapp_xml(n_passes):
     amp   = cfg['ampcor']
     insar = cfg['insar']
-    dem   = cfg['dem_file']
+    scene   = cfg['scene']
     return f"""<?xml version="1.0" encoding="UTF-8"?>
     <topsApp>
         <component name="topsinsar">
@@ -205,9 +217,9 @@ def make_topsapp_xml(n_passes):
                 <catalog>secondary.xml</catalog>
             </component>
     
-            <property name="swaths">{cfg['swaths']}</property>
-            <property name="region of interest">{cfg['region_of_interest']}</property>
-            <property name="demFilename">{dem}</property>
+            <property name="swaths">{scene['swaths']}</property>
+            <property name="region of interest">{scene['region_of_interest']}</property>
+            <property name="demFilename">{scene["dem_file"]}</property>
     
             <!-- InSAR processing steps -->
             <property name="do interferogram">{insar['do_interferogram']}</property>
@@ -261,7 +273,7 @@ def run_topsapp_cmd(logger=None):
     process.stdout.close()
     return process.wait()
 
-    
+
 def process_pair(ref_safe, sec_safe, parent_dir, logger=None):
     log = get_logger(logger)
     
@@ -269,24 +281,22 @@ def process_pair(ref_safe, sec_safe, parent_dir, logger=None):
     pair_dir = os.path.join(parent_dir, "-".join(dates))
     os.makedirs(pair_dir, exist_ok=True)
     os.chdir(pair_dir)
-    log.info(f"  Working in: {pair_dir}")
+    log.info(f"\tWorking in: {pair_dir}")
 
     n_passes = compute_n_passes(*dates)
     write_xml_files(ref_safe, sec_safe, n_passes)
-    log.info("  Created reference.xml, secondary.xml, topsApp.xml")
+    log.info("\tCreated reference.xml, secondary.xml, topsApp.xml")
     
     return run_topsapp_cmd(log)
 
 
 def run_topsapp():
     # . . Setup steps
-    os.environ['OMP_NUM_THREADS'] = '8'
+    os.environ['OMP_NUM_THREADS'] = str(cfg['compute']['omp_num_threads'])
     log = setup_logger('./topsapp_processing.log')
     parent_dir = os.getcwd()
 
     log.info(f"Working directory: {parent_dir}\n")
-    # log.info(f"ISCE_HOME:  {os.environ.get('ISCE_HOME')}")
-    # log.info(f"ISCE_STACK: {os.environ.get('ISCE_STACK')}")
 
     safe_files = sorted(glob.glob('SAFE/*.zip'))
     if len(safe_files) < 2:
@@ -351,10 +361,11 @@ def run_topsapp():
 
 ########### POSTPROCESSING ####################################################
 
-def crop_denseoff(file):   
-    xmin, xmax = 1.345e6, 1.43e6
-    ymin, ymax = 1.646e6, 1.76e6
-    da = xr.open_dataarray(file, engine='rasterio').rio.reproject(3031, nodata=np.nan)
+def crop_denseoff(file):
+    crop = cfg['crop']
+    xmin, xmax = crop['xmin'], crop['xmax']
+    ymin, ymax = crop['ymin'], crop['ymax']
+    da = xr.open_dataarray(file, engine='rasterio').rio.reproject(crop['output_epsg'], nodata=np.nan)
     return da.sel(x=slice(xmin, xmax), y=slice(ymax, ymin))
 
 
