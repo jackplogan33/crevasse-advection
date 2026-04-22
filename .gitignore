@@ -10,9 +10,9 @@ fetchOrbit.py
 offsets/dem/*
 !offsets/dem/.gitkeep
 
-
-# Hide individual offset folders
+# Ignore processing outpus
 20*-20*/
+*.nc
 
 # Hidden folders
 .ipynb_checkpoints/
