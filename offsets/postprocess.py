@@ -239,9 +239,24 @@ def convert_coords(ds, az_res=14.1, rg_res=2.3, inc_angle=38.3, heading=0.0097):
     
     # Unit conversion to velocity, saved in dataset
     return xr.Dataset({
-        'vx':vx,
-        'vy':vy,
-        'vv':np.sqrt((vx ** 2) + (vy ** 2))
+        'vx': vx.assign_attrs({
+            "long_name":    "Surface velocity in x-direction",
+            "standard_name":"land_ice_surface_x_velocity",
+            "units":        "m yr-1",
+            "grid_mapping": "spatial_ref",
+        }),
+        'vy': vy.assign_attrs({
+            "long_name":    "Surface velocity in y-direction",
+            "standard_name":"land_ice_surface_y_velocity",
+            "units":        "m yr-1",
+            "grid_mapping": "spatial_ref",
+        }),
+        'vv': np.sqrt(vx**2 + vy**2).assign_attrs({
+            "long_name":    "Surface ice speed",
+            "standard_name":"land_ice_surface_velocity",
+            "units":        "m yr-1",
+            "grid_mapping": "spatial_ref",
+        }),
     })
 
 
@@ -261,19 +276,20 @@ def load_config(path):
     """Load a JSON config and return the postprocessing sub-section."""
     with open(path) as f:
         cfg = json.load(f)
-    return cfg.get('postprocessing', {})
+    return cfg
 
 if __name__ == '__main__':
     args = parse_args()
     cfg = load_config(args.config)
+    postprocessing = cfg.get('postprocessing', {})
 
     # . . Top-level flags
-    stack       = cfg.get('stack', False)
-    input_file  = cfg.get('input', None)
-    output_file = cfg.get('output', 'filt_dense_offsets.nc')
+    stack       = postprocessing.get('stack', False)
+    input_file  = postprocessing.get('input', None)
+    output_file = postprocessing.get('output', 'filt_dense_offsets.nc')
 
     # . . Cleaning params
-    cleaning        = cfg.get('cleaning', {})
+    cleaning        = postprocessing.get('cleaning', {})
     window          = int(cleaning.get('window_size', 80))
     mad_mult        = int(cleaning.get('mad_mult', 15.0))
     az_bounds       = tuple(cleaning.get('az_bounds', [-0.125, 0.55]))
@@ -281,7 +297,7 @@ if __name__ == '__main__':
     temporal_filter = tuple(cleaning.get('temporal_filter', [3, 7, 7]))
 
     # . . Velocity params
-    vel_cfg     = cfg.get('velocity', {})
+    vel_cfg     = postprocessing.get('velocity', {})
     do_velocity = vel_cfg.get('do_velocity', True)
     vel_file    = vel_cfg.get('output', 'velocity.nc')
     az_res      = vel_cfg.get('az_res',    14.1)
@@ -290,7 +306,7 @@ if __name__ == '__main__':
     heading     = vel_cfg.get('heading',   0.0097)
 
     # . . Grid params (only needed for stacking)
-    grid        = cfg.get('grid', {})
+    grid        = postprocessing.get('grid', {})
     
     if not stack and input_file is None:
         print("Error: config must specify 'stack: true', an 'input' file, or both.")
@@ -335,3 +351,19 @@ if __name__ == '__main__':
             inc_angle=inc_angle, 
             heading=heading
         ).to_netcdf(vel_file)
+
+        vel_ds = vel_ds.assign_attrs({
+            "description": "Sentinel-1 dense offset velocities processed using ISCE2 topsApp. "
+                           "Units are meters per year in EPSG:3031.",
+            "ampcor_window_width":           cfg["ampcor"]["window_width"],
+            "ampcor_window_height":          cfg["ampcor"]["window_height"],
+            "ampcor_skip_width":             cfg["ampcor"]["skip_width"],
+            "ampcor_skip_height":            cfg["ampcor"]["skip_height"],
+            "ampcor_search_width_per_pass":  cfg["ampcor"]["search_width_per_pass"],
+            "ampcor_search_height_per_pass": cfg["ampcor"]["search_height_per_pass"],
+            "filter_window_size":            window,
+            "filter_mad_mult":               mad_mult,
+            "filter_az_bounds":              str(az_bounds),
+            "filter_rg_bounds":              str(rg_bounds),
+            "filter_temporal":               str(temporal_filter),
+        })
