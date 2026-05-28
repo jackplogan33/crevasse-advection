@@ -35,3 +35,5 @@ dependencies:
  - opencv
  - conda-build
  - isce2
+ - s3fs
+ - zarr
