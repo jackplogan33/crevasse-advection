@@ -10,6 +10,9 @@ fetchOrbit.py
 offsets/dem/*
 !offsets/dem/.gitkeep
 
+data/shapefiles/*
+!data/shapefiles/.gitkeep
+
 # Ignore processing outpus
 20*-20*/
 *.nc
