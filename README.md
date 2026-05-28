@@ -79,6 +79,10 @@ When running the notebooks, make sure you have selected the "ISCE2" kernel.
 
 We have written a series of notebooks to explain the setup, run, and postprocessing steps.
 
+### Part 1: Velocity Generation
+The first part of this repository consists of 3 notebooks. 
+Notebooks 01&ndash;03 demonstrate the ISCE2 interferometric processor and walk through the python scripts written to semi-automate the offset processing pipeline.
+
 **`01-ISCE2_setup.ipynb`** *(required)* <br>
 Download the DEM for the region of interest and ensure the file structure is properly set up to run ISCE2 in a contained file structure.
 
@@ -90,9 +94,27 @@ Turn the offsets from azimuth-range displacements in pixels to ground velocity i
 This notebook walks through the steps and parameters in `./offsets/postprocces.py`.
 
 > [!NOTE] 
-> Only notebook one is required. The remaining steps can be run from the python scripts instead. 
+> Only notebook 01 is required. The remaining steps can be run from the python scripts instead. 
 > 
 > That said, running through the notebooks first is a good way to get familiar with the workflow and fine tuning parameters before using the CLI.
+
+### Part 2: Data Analysis
+The second part of this repository consists of 3 more notebooks demonstrating the methods from [PAPER] and generating the figures.
+
+**`04-stress_derivation.ipynb`** <br>
+Derive surface field quantities over the study area using the functions within `blue_ice_tools.py`.
+Output quantities include:
+* Flow rotated strain rate tensor
+* Deviatoric stress tensor
+* Cauchy stress tensor in Principal components
+* Effective stress
+* von Mises stress
+The notebook generates the study area figure (Figure 1), and a 6 panel plot showing a single date of the surface fields (Figure 3).
+
+**`05-parcel_tracking.ipynb`** <br>
+Use the `LangrangianTracking` class from `blue_ice_tools.py` to advect parcels in a Lagrangian reference frame, along the direction of flow.
+Generates Figures 4&ndash;9 from the publication.
+
 
 ## Citation
 
