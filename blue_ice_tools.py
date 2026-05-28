@@ -7,16 +7,20 @@ import rioxarray as rxr
 import dask.array as da
 import pandas as pd
 import geopandas as gpd
+import matplotlib.pyplot as plt
 
 from shapely.geometry import Polygon
 from shapely.geometry import Point
-# from tqdm import tqdm
+
+from matplotlib.gridspec import GridSpec
+from matplotlib.ticker import MaxNLocator, FuncFormatter
+from matplotlib.lines import Line2D
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 from scipy.signal import savgol_filter as sg
-from scipy.ndimage import median_filter, convolve1d
+from scipy.ndimage import median_filter, convolve1d, binary_erosion
 from scipy.interpolate import RegularGridInterpolator
 
-import matplotlib.pyplot as plt
 import imageio.v2 as imageio
 
 ##########################################################################
@@ -276,7 +280,7 @@ def calc_strain_stress(
     S = S.rename_vars({'1':'sigma1', '2':'sigma2', 'VM':'von_mises'})
     T = T.rename_vars({'XX':'tau_xx', 'YY':'tau_yy', 'XY':'tau_xy'})
 
-    return xr.merge([ds, E, S, T])  # Merge three datasets, return
+    return xr.merge([ds, E, S, T], compat='no_conflicts')  # Merge three datasets, return
 
 def _monthly_resample(ds):
     return (ds.sortby('mid_date')
@@ -411,11 +415,14 @@ class LagrangianTracking:
     an xarray dataset describing a velocity field (vx, vy).
     
     Supports forward and backward propogation from any index."""
-    def __init__(self, ds: xr.Dataset, vx='vx', vy='vy', time='mid_date'):
+    def __init__(self, ds: xr.Dataset, vx='vx', vy='vy', time='mid_date', extra_ds=None, extra_time='mid_date'):
         self.ds = ds
         self.vx_name = vx
         self.vy_name = vy
         self.time_name = time
+
+        self.extra_ds = extra_ds
+        self.extra_time = extra_time
 
         self.x = ds['x'].values
         self.y = ds['y'].values
@@ -475,7 +482,7 @@ class LagrangianTracking:
 
         t0 = np.datetime64(t0)                          # enforce t0 as numpy datetime
         t0 = (t0 - self.t[0]) / np.timedelta64(1, 'D')  # Get t0 as days since start of array
-        t_start = np.where(t == t0)[0][0]
+        t_start = np.argmin(np.abs(t - t0))
         
         # Get only times "ahead" of starting index for direction
         if direction == 'backward':
@@ -510,16 +517,26 @@ class LagrangianTracking:
         # . . Convert times back to datetimes
         times = self.t[0] + np.array(t[:len(X)], dtype='timedelta64[D]')
         
-        # . . Collect dataset variabls using .sel(method='nearest')
+        # . . Collect dataset variables using .sel(method='nearest')
         ds_sampled = self.ds.sel(
             x=xr.DataArray(X, dims='t'),
             y=xr.DataArray(Y, dims='t'),
-            **{'mid_date':xr.DataArray(times, dims='t')},
+            **{self.time_name:xr.DataArray(times, dims='t')},
             method='nearest'
         )
         
         # . . Assign parcel's coordinates explicitly
         ds_sampled = ds_sampled.assign_coords(x=('t', X), y=('t', Y))
+
+        if self.extra_ds is not None:
+            extra_sampled = self.extra_ds.sel(
+                x=xr.DataArray(X, dims='t'),
+                y=xr.DataArray(Y, dims='t'),
+                **{self.extra_time: xr.DataArray(times, dims='t')},
+                method='backfill'
+            )
+            ds_sampled = xr.merge([ds_sampled, extra_sampled], compat='override')
+
         return ds_sampled
     
     def parcel_advection(self, x0, y0, t0):
@@ -556,47 +573,144 @@ class LagrangianTracking:
             bwd = self._advect_parcel(x0[i], y0[i], t0[i], direction='backward')
 
             # Combine trajectories
-            combined = xr.concat([bwd.isel(t=slice(None, None, -1)).isel(t=slice(1, None)), fwd], dim='t')
-            combined = combined.assign_coords(parcel=i)  # Create parcel dimension for merge
+            combined = xr.concat([bwd.isel(t=slice(1, None)).isel(t=slice(None, None, -1)), fwd], dim='t')
+            combined = combined.assign_coords(
+                parcel=i,
+                # x0=x0[i],
+                # y0=y0[i],
+                # t0=t0[i]
+            )  # Create parcel dimension for merge
             all_trajs.append(combined)
 
         # . . Concat on parcel dimension
-        ds_out = xr.concat(all_trajs, dim='parcel')
+        ds_out = xr.concat(all_trajs, dim='parcel', coords='different', compat='equals')
         return ds_out
 
-##########################################################################
+    def ensemble_advection(
+        self,
+        clip_shapes,
+        mask_date,
+        mask_var='fracture_conf',
+        mask_time_dim='mid_date',
+        N=800,
+        erode_iters=20,
+        seed=7,
+        filt_size=(1, 10),
+        t0=None,
+    ):
+        """
+        Sample N random parcels from a masked region and run ensemble parcel advection.
+ 
+        Clips a copy of the dataset supplied at initialisation (``extra_ds`` if
+        provided, otherwise ``ds``) to define a valid sampling region, erodes the
+        boundary inward to avoid edge effects, randomly picks N start points, runs
+        ``parcel_advection``, and returns the median-filtered result.
+ 
+        Parameters
+        ----------
+        clip_shapes : list of dict
+            Ordered sequence of clipping operations. Each dict
+            must contain:
+            - 'gdf' (gpd.GeoDataFrame): geometry used for clipping.
+            - 'invert' (bool): if True, pixels *outside* the geometry are kept.
+            - 'all_touched' (bool, optional): passed to rioxarray.clip. Default False.
+ 
+            Example::
+ 
+                [
+                    {'gdf': gl_poly,       'invert': True,  'all_touched': True},
+                    {'gdf': shirase_shape, 'invert': False},
+                ]
+ 
+        mask_date : str
+            Date string for extracting a single time slice for masking
+            (e.g., '2022-03-25'). Pixels where `mask_var` is null at this date
+            are excluded from sampling.
+        mask_var : str
+            Variable tested with isnull() to identify valid pixels.
+            Default: 'fracture_conf'.
+        mask_time_dim : str
+            Name of the time dimension in the dataset used for masking.
+            Default: 'mid_date'.
+        N : int
+            Number of parcels to sample. Default: 800.
+        erode_iters : int
+            Binary erosion iterations applied to the valid mask before sampling,
+            to avoid selecting pixels at region edges. Default: 20.
+        seed : int
+            Random seed for reproducible parcel selection. Default: 7.
+        filt_size : tuple
+            size argument forwarded to apply_med_filt for smoothing raw
+            trajectories along the time axis. Default: (1, 10).
+        t0 : str or None
+            Start time for all parcels. Defaults to `mask_date` if not provided.
+ 
+        Returns
+        -------
+        xr.Dataset
+            Median-filtered parcel dataset with dimensions (parcel, t), as
+            returned by parcel_advection.
+ 
+        Raises
+        ------
+        ValueError
+            If no valid pixels remain after masking and erosion.
+ 
+        Examples
+        --------
+        >>> clip_shapes = [
+        ...     {'gdf': gl_poly,       'invert': True,  'all_touched': True},
+        ...     {'gdf': shirase_shape, 'invert': False},
+        ... ]
+        >>> parcels = tracker.ensemble_advection(
+        ...     clip_shapes=clip_shapes,
+        ...     mask_date='2022-03-25',
+        ...     N=800,
+        ... )
+        """
+        # . . Copy the initialisation dataset to avoid mutating instance state.
+        # Use extra_ds when available (e.g. fracture data), otherwise fall back to ds.
+        source = self.extra_ds if self.extra_ds is not None else self.ds
+        shelf = source.copy()
+ 
+        # . . Build valid region by sequential clipping
+        for clip in clip_shapes:
+            gdf = clip['gdf']
+            shelf = shelf.rio.clip(
+                gdf.geometry, gdf.crs,
+                all_touched=clip.get('all_touched', False),
+                invert=clip.get('invert', False),
+            )
+ 
+        # . . Extract validity mask at mask_date: True where data is absent
+        mask = (
+            shelf[mask_var]
+            .sel({mask_time_dim: mask_date}, method='nearest')
+            .isnull()
+            .values
+        )
+ 
+        # . . Erode boundary inward to avoid edge selection
+        eroded = binary_erosion(~mask, iterations=erode_iters)
+ 
+        # . . Sample N random (x, y) points within the valid region
+        valid = np.argwhere(eroded)
+        if len(valid) == 0:
+            raise ValueError(
+                "No valid pixels remain after masking and erosion. "
+                "Try reducing erode_iters, checking clip geometries, or "
+                "verifying that mask_var is populated at mask_date."
+            )
+        rng = np.random.default_rng(seed)
+        sample = valid[rng.choice(len(valid), size=N, replace=False)]
+        ys = shelf.y.values[sample[:, 0]]
+        xs = shelf.x.values[sample[:, 1]]
+        t0_arr = [t0 or mask_date] * N
+ 
+        # . . Advect all parcels and apply median filter along time axis
+        parcels_raw = self.parcel_advection(xs, ys, t0_arr)
+        return apply_med_filt(parcels_raw, size=filt_size)
 
-def plot_arrows(xs, ys, ax):
-    '''
-    Plotting function that plots the direction arrows for the parcel location
-    produced by bit.parcel_strain_stress().
-    '''
-    xs = np.array(xs)
-    ys = np.array(ys)
-    
-    # Sample points for arrows (e.g., every 10th point)
-    arrow_indices = np.arange(2, len(xs)-1, 5)  # Avoid including the last index
-    x_arrows = xs[arrow_indices]
-    y_arrows = ys[arrow_indices]
-    # Compute direction vectors for arrows (using np.diff to calculate directional vectors)
-    dx = np.diff(xs)  # Differences in x
-    dy = np.diff(ys)  # Differences in y
-    directions = np.sqrt(dx**2 + dy**2)  # Magnitudes of direction vectors
-    
-    # Normalize the direction vectors
-    dx = dx / directions
-    dy = dy / directions
-    
-    # Align direction vectors with sampled arrow positions
-    dx_arrows = dx[arrow_indices]  # Aligning with arrow positions
-    dy_arrows = dy[arrow_indices]  # Aligning with arrow positions
-    
-    # Plot the line
-    ax.plot(xs, ys, color='white', label='Parcel path')
-    
-    # Add arrows using quiver
-    ax.quiver(x_arrows, y_arrows, dx_arrows, dy_arrows, 
-               angles='uv', scale_units='xy', width=.05, color='white')
 
 ##########################################################################
 
@@ -698,3 +812,124 @@ def apply_med_filt(arr, size=3):
         arr,
         kwargs={'size':size}
     )
+
+############ Plotting Utilities  ##############################################################
+
+def map_patch(ax, txt, va='center', fs=36, alpha=0.9):
+    ax.text(
+        0.03, 0.95, txt,
+        transform=ax.transAxes,
+        va=va,
+        fontsize=fs,
+        bbox=dict(facecolor='white', alpha=alpha, edgecolor='none', pad=3)
+    )
+
+def plot_patch(ax, txt, va='center', fs=36, alpha=0.9, x=0.01, y=0.93):
+    ax.text(
+        x, y, txt,
+        transform=ax.transAxes,
+        va=va,
+        fontsize=fs,
+        bbox=dict(facecolor='white', alpha=alpha, edgecolor='none', pad=3)
+    )
+
+def meters_to_km(x, pos):
+    return f"{x/1000:.0f}"
+
+def format_map(ax, fs=14, xrot=0, yrot=90):
+    ax.xaxis.set_major_formatter(FuncFormatter(meters_to_km))
+    ax.yaxis.set_major_formatter(FuncFormatter(meters_to_km))
+    ax.tick_params(axis='x', rotation=xrot)
+    ax.tick_params(axis='y', rotation=yrot)
+    ax.set_xlabel('Southern Polar Stereographic X [km]', fontsize=fs)
+    ax.set_ylabel('Southern Polar Stereographic Y [km]', fontsize=fs)
+    ax.set_title(None)
+    ax.set_aspect('equal')
+    ax.grid(ls='--', alpha=0.5)
+
+def inset_colorbar(fig, ax, cs, label, inset=0.035, height_scale=0.4, pad=0.01, cbar_width=0.005):
+    pos = ax.get_position()
+
+    cax = fig.add_axes([
+        pos.x1 - cbar_width - inset,
+        pos.y0 + inset,
+        cbar_width,
+        pos.height * height_scale
+    ])
+    cax.set_zorder(10)
+
+    # Make the colorbar
+    cbar = fig.colorbar(cs, cax=cax, label=label)
+
+    # Force a draw so that text bounding boxes exist
+    fig.canvas.draw()
+
+    # . . Tight bounding box of the whole colorbar (including label!)
+    bbox = cbar.ax.get_tightbbox(fig.canvas.get_renderer())
+
+    # Convert from display coords to figure fraction
+    inv = fig.transFigure.inverted()
+    bbox_fig = inv.transform(bbox)
+
+    # Expand the background by scalar mults of pad
+    bg_rect = [
+        bbox_fig[0][0] - pad/2,
+        bbox_fig[0][1] - 1.5*pad,
+        (bbox_fig[1][0] - bbox_fig[0][0]) + pad,
+        (bbox_fig[1][1] - bbox_fig[0][1]) + 3*pad
+    ]
+
+    # . . Calculate shift needed to align right edge w/ inset number
+    bg_right_edge = bg_rect[0] + bg_rect[2]  # left + width
+    desired_right_edge = pos.x1 - inset
+    xshift = desired_right_edge - bg_right_edge
+
+    bg_bottom_edge = bg_rect[1]
+    desired_bottom_edge = pos.y0 + inset
+    yshift = desired_bottom_edge - bg_bottom_edge
+
+    cax_pos = cax.get_position()
+    cax.set_position([cax_pos.x0+xshift, cax_pos.y0+yshift, cax_pos.width, cax_pos.height])
+
+    bg_rect[0] += xshift  # shift background left position
+    bg_rect[1] += yshift  # shift background up
+    
+    # Background axes
+    bg = fig.add_axes(bg_rect, zorder=9)
+    bg.set_facecolor((1,1,1,0.7))
+    bg.set_xticks([])
+    bg.set_yticks([])
+
+    return cbar
+
+def plot_arrows(xs, ys, ax):
+    '''
+    Plotting function that plots the direction arrows for the parcel location
+    produced by bit.parcel_strain_stress().
+    '''
+    xs = np.array(xs)
+    ys = np.array(ys)
+    
+    # Sample points for arrows (e.g., every 10th point)
+    arrow_indices = np.arange(2, len(xs)-1, 5)  # Avoid including the last index
+    x_arrows = xs[arrow_indices]
+    y_arrows = ys[arrow_indices]
+    # Compute direction vectors for arrows (using np.diff to calculate directional vectors)
+    dx = np.diff(xs)  # Differences in x
+    dy = np.diff(ys)  # Differences in y
+    directions = np.sqrt(dx**2 + dy**2)  # Magnitudes of direction vectors
+    
+    # Normalize the direction vectors
+    dx = dx / directions
+    dy = dy / directions
+    
+    # Align direction vectors with sampled arrow positions
+    dx_arrows = dx[arrow_indices]  # Aligning with arrow positions
+    dy_arrows = dy[arrow_indices]  # Aligning with arrow positions
+    
+    # Plot the line
+    ax.plot(xs, ys, color='white', label='Parcel path')
+    
+    # Add arrows using quiver
+    ax.quiver(x_arrows, y_arrows, dx_arrows, dy_arrows, 
+               angles='uv', scale_units='xy', width=.05, color='white')
