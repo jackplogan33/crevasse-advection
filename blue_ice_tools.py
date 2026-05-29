@@ -830,7 +830,8 @@ def plot_patch(ax, txt, va='center', fs=36, alpha=0.9, x=0.01, y=0.93):
         transform=ax.transAxes,
         va=va,
         fontsize=fs,
-        bbox=dict(facecolor='white', alpha=alpha, edgecolor='none', pad=3)
+        bbox=dict(facecolor='white', alpha=alpha, edgecolor='none', pad=3),
+        zorder=1000
     )
 
 def meters_to_km(x, pos):
