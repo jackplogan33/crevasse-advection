@@ -37,3 +37,4 @@ dependencies:
  - isce2
  - s3fs
  - zarr
+ - h5netcdf
