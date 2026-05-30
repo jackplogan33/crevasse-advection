@@ -21,7 +21,7 @@ There are two installation options depending on your computing environment and p
 
 I built a JupyterHub image hosted in quay.io.
 If your cloud computing environment allows you to pull your own image, you can do so using the following link:
-`quay.io/jackplogan/isce-image:b8a558f43a10`
+`quay.io/jackplogan/isce-image:0e337edc16fc `
 
 This image has all of the environment variable set, as far as I have tested.
 
