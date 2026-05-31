@@ -386,9 +386,9 @@ def _calc_stress(E, n, A):
 
     # Deviatoric stress tensor
     T = {
-        'XX':(A ** (-1/n)) * ((E['effective'] ** exp) * (E['XX'])),
-        'YY':(A ** (-1/n)) * ((E['effective'] ** exp) * (E['YY'])),
-        'XY':(A ** (-1/n)) * ((E['effective'] ** exp) * (E['XY']))
+        'XX': (A ** (-1/n)) * ((E['effective'] ** exp) * (E['XX'])) / 1000,  # Scale to kPa
+        'YY': (A ** (-1/n)) * ((E['effective'] ** exp) * (E['YY'])) / 1000,
+        'XY': (A ** (-1/n)) * ((E['effective'] ** exp) * (E['XY'])  / 1000)
     }
 
     T = xr.Dataset(T)  # Convert Deviatoric stress tensor to dataset
