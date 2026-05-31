@@ -16,6 +16,7 @@ data/shapefiles/*
 # Ignore processing outpus
 20*-20*/
 *.nc
+*.zarr/
 
 # Hidden folders
 .ipynb_checkpoints/
