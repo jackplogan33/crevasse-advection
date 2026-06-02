@@ -38,3 +38,4 @@ dependencies:
  - s3fs
  - zarr
  - h5netcdf
+ - obstore
