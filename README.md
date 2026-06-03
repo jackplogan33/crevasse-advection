@@ -1,124 +1,42 @@
-# ISCE2 Processing and Crevasse Advection
+# Crevasse Advection at Shirase Glacier
 
-Using the ISCE2 interferometric processor, we perform pixel offset tracking to determine the flow of glacial ice from Sentinel-1 Synthetic Aperture Radar (SAR).
-This workflow is cloud native and is designed to process multiple offsets in series, exploiting the amplitude of a SAR image. 
-It can easily be applied to create your own surface velocity timeseries anywhere with adequate Sentinel-1 coverage.
+This repository accompanies the publication [CITATION]. It contains two independent
+components: a Sentinel-1 SAR velocity processing pipeline (Part 1) and the scientific 
+analysis and figure-generation code for the paper (Part 2).
 
-This workflow is the first step in a larger pipeline: surface velocities derived from 
-pixel offset tracking are used downstream to compute ice stresses and observe crevasse 
-advection from a Lagrangian reference frame.
+## Where do you want to start?
 
-More information will be detailed in our forthcoming publication.
+**I want to reproduce the paper figures**
+* The processed velocity data is archived on Zenodo [DOI: TBD].
+  Download it and head to [`analysis/`](./analysis/README.md).
 
+**I want to run the velocity pipeline myself**
+* See [`processing/`](./processing/README.md) for installation and usage.
 
+**I want to adapt the pipeline for a different region or sensor**
+* Start with the [`processing/`](./processing/README.md) README, then focus on `02-run_topsapp.ipynb`
+  and `03-postprocess.ipynb` where the key parameters are documented.
 
-## Installation
+## Repository Structure
 
-There are two installation options depending on your computing environment and permissions.
-1. You are in a cloud computing environment and *can* bring your own image (easiest)
-
-2. You are in a cloud computing environment and *cannot* bring your own image, **or** are running locally (less easy)
-
-### Custom Image
-
-I built a JupyterHub image hosted in quay.io.
-If your cloud computing environment allows you to pull your own image, you can do so using the following link:
-`quay.io/jackplogan/isce-image:0e337edc16fc `
-
-This image has all of the environment variable set, as far as I have tested.
-
-1. Clone repository:
-```bash
-git clone https://github.com/jackplogan33/crevasse-advection/
 ```
-That's it. Now you can run all the notebooks.
-
-> [!NOTE] 
-> This image has jupyter-keepalive. 
-> This allows you to keep your JupyterHub session active while running a long process, like 20 hours of offsets.
-
-### Running locally or a community image
-This process is a little bit more involved. 
-There are many conflicting environment variables that need to be specified for everything to run properly.
-Depending on your machine's configuration, these steps may not work and will require additional debugging.
-
-1. Clone repository:
-```bash
-git clone https://github.com/jackplogan33/crevasse-advection/
-cd ./crevasse-advection
+crevasse-advection/
+├── 01-processing/         # Part 1: Sentinel-1 pixel offset tracking with ISCE2
+│   ├── offsets/           # Python scripts for automated offset processing
+│   └── notebooks 01-03
+├── 02-analysis/           # Part 2: Stress derivation, parcel tracking, figures
+│   ├── blue_ice_tools.py  # Utility library
+│   └── notebooks 01-03
+├── environment.yml
+├── data/                  # Placeholder. Filled by downloads from Zenodo or processing
+├── media/                 # Placeholder. Filled by Part 2 notebooks
+└── README.md              # You are here
 ```
-
-2. Install conda environment:
-```bash
-conda env create -f environment.yml
-```
-
-3. Set environment variables and create a kernel for use in Jupyter Lab:
-```bash
-conda activate isce2
-./setup.sh
-
-conda deactivate
-conda activate isce2
-```
-
-> [!IMPORTANT]
-> Make sure you activate the environment first. 
-> This ensures that the `$CONDA_PREFIX` is pointing to the isce2 environment, not the default environment.
-> 
-> This script edits the activation and deactivation scripts to make the ISCE scripts command line accessible.
-
-In theory, this should work. To test, you can run:
-```bash
-which topsApp.py
-```
-If it returns a path, it worked. 
-Now you can run the notebooks. 
-When running the notebooks, make sure you have selected the "ISCE2" kernel.
-
-## Usage
-
-We have written a series of notebooks to explain the setup, run, and postprocessing steps.
-
-### Part 1: Velocity Generation
-The first part of this repository consists of 3 notebooks. 
-Notebooks 01&ndash;03 demonstrate the ISCE2 interferometric processor and walk through the python scripts written to semi-automate the offset processing pipeline.
-
-**`01-ISCE2_setup.ipynb`** *(required)* <br>
-Download the DEM for the region of interest and ensure the file structure is properly set up to run ISCE2 in a contained file structure.
-
-**`02-run_topsapp.ipynb`** <br>
-Download the necessary input files for a single offset and write the XML files for topsApp. This notebook explains each of the steps occurring in the run script `./offsets/run_isce2.py`.
-
-**`03-postprocess_offsets.ipynb`** <br>
-Turn the offsets from azimuth-range displacements in pixels to ground velocity in xy-coordinates.
-This notebook walks through the steps and parameters in `./offsets/postprocces.py`.
-
-> [!NOTE] 
-> Only notebook 01 is required. The remaining steps can be run from the python scripts instead. 
-> 
-> That said, running through the notebooks first is a good way to get familiar with the workflow and fine tuning parameters before using the CLI.
-
-### Part 2: Data Analysis
-The second part of this repository consists of 3 more notebooks demonstrating the methods from [PAPER] and generating the figures.
-
-**`04-stress_derivation.ipynb`** <br>
-Derive surface field quantities over the study area using the functions within `blue_ice_tools.py`.
-Output quantities include:
-* Flow rotated strain rate tensor
-* Deviatoric stress tensor
-* Cauchy stress tensor in Principal components
-* Effective stress
-* von Mises stress
-The notebook generates the study area figure (Figure 1), and a 6 panel plot showing a single date of the surface fields (Figure 3).
-
-**`05-parcel_tracking.ipynb`** <br>
-Use the `LangrangianTracking` class from `blue_ice_tools.py` to advect parcels in a Lagrangian reference frame, along the direction of flow.
-Generates Figures 4&ndash;9 from the publication.
-
 
 ## Citation
 
-If you use code or data from this repository, please cite both the manuscript and the code:
+If you use this code or data, please cite both the paper and this repository:
 
-> **Paper citation:** [tbd]
+> **Paper:** [tbd]
+> **Data:**  [tbf - Zenodo DOI]
+> **Code:** [tbd - Zenodo DOI]

@@ -18,8 +18,8 @@ Download and place the data in `analysis/data/` before running the notebooks.
 | Notebook | Figures generated | Key outputs |
 |----------|------------------|-------------|
 | `01-stress_derivation.ipynb` | Figures 1, 3 | Strain rate tensor, deviatoric stress, von Mises stress, effective stress |
-| `02-parcel_tracking.ipynb` | Figures 4–9 | Lagrangian parcel trajectories, crevasse advection timeseries |
-| `03-supplemental.ipynb` | Supplemental figures and movies | S1-S7, Movies 1-5 |
+| `02-parcel_tracking.ipynb` | Figures 4&ndash;9 | Lagrangian parcel trajectories, crevasse advection timeseries |
+| `03-supplemental.ipynb` | Supplemental figures and movies | S1&ndash;S7, Movies 1&ndash;5 |
 
 Notebooks 01 and 02 can be run independently of each other. Notebook 03 depends 
 on outputs from both and should be run last.

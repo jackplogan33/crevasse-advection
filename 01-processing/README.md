@@ -31,7 +31,9 @@ Choose the option that matches your computing environment:
 
 A pre-built JupyterHub image with all dependencies and environment variables configured
 is available on quay.io:
-```quay.io/jackplogan/isce-image:0e337edc16fc ```
+```
+quay.io/jackplogan/isce-image:0e337edc16fc
+```
 
 **Setup:**
 
