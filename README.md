@@ -10,6 +10,8 @@ advection from a Lagrangian reference frame.
 
 More information will be detailed in our forthcoming publication.
 
+
+
 ## Installation
 
 There are two installation options depending on your computing environment and permissions.
@@ -73,7 +75,6 @@ which topsApp.py
 If it returns a path, it worked. 
 Now you can run the notebooks. 
 When running the notebooks, make sure you have selected the "ISCE2" kernel.
-
 
 ## Usage
 
