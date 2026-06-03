@@ -11,6 +11,8 @@ fetchOrbit.py
 !01-processing/offsets/dem/.gitkeep
 data/shapefiles/*
 !data/shapefiles/.gitkeep
+*.png
+*.mp4
 
 # Ignore processing outpus
 20*-20*/
