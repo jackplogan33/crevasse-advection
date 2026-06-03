@@ -7,9 +7,8 @@ fetchOrbit.py
 *.zip
 *.EOF
 *.log
-offsets/dem/*
-!offsets/dem/.gitkeep
-
+01-processing/offsets/dem/*
+!01-processing/offsets/dem/.gitkeep
 data/shapefiles/*
 !data/shapefiles/.gitkeep
 
