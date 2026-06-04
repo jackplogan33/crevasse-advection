@@ -11,8 +11,7 @@ from scipy.ndimage import median_filter
 from skimage.restoration.inpaint import inpaint_biharmonic
 
 ########### STACKING ##########################################################
-
-def resave_offset_nc(filebase, xmin, xmax, nx, ymin, ymax, ny, chunk_size=34):   
+def resave_offset_nc(filebase, xmin, xmax, nx, ymin, ymax, ny, output_dir='.', chunk_size=34):
     """
     Read per-pair netCDF offset files produced by run_isce2.py and stack them
     into a single dataset along a 'mid_date' time dimension.
@@ -97,13 +96,12 @@ def resave_offset_nc(filebase, xmin, xmax, nx, ymin, ymax, ny, chunk_size=34):
     })
 
     # . . Write to disk
-    outpath = f'./{filebase}'
+    outpath = Path(output_dir) / filebase
     print(f'  Writing to {outpath}')
     offset_ds.to_netcdf(outpath)
 
 
 ########### CLEANING ##########################################################
-
 def offset_cleaning(
     ds: xr.Dataset,
     window_size: int = 80,
@@ -197,7 +195,6 @@ def inpaint_slice(data, mask):
     
 
 ########### COORDINATE CONVERSION #############################################
-
 def convert_coords(ds, az_res=14.1, rg_res=2.3, inc_angle=38.3, heading=0.0097):
     """
     Convert pixel offsets (pixels/day) to surface velocity (m/year) in
@@ -261,7 +258,6 @@ def convert_coords(ds, az_res=14.1, rg_res=2.3, inc_angle=38.3, heading=0.0097):
 
 
 ########### CLI ###############################################################
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Postprocess Sentinel-1 dense offsets: stack, clean, convert to velocity.',
@@ -283,15 +279,19 @@ if __name__ == '__main__':
     cfg = load_config(args.config)
     postprocessing = cfg.get('postprocessing', {})
 
-    # . . Top-level flags
-    stack       = postprocessing.get('stack', False)
-    input_file  = postprocessing.get('input', None)
-    output_file = postprocessing.get('output', 'filt_dense_offsets.nc')
+    # . . Stack Params
+    stack_cfg     = postprocessing.get('stack', {})
+    do_stack      = stack_cfg.get('enabled', False)
+    stack_out_dir = stack_cfg.get('output_dir', '.')
+    grid          = stack_cfg.get('grid', {})
+
 
     # . . Cleaning params
+    offsets_file    = postprocessing.get('offsets', None)
+    output_file     = postprocessing.get('output', 'filt_dense_offsets.nc')
     cleaning        = postprocessing.get('cleaning', {})
     window          = int(cleaning.get('window_size', 80))
-    mad_mult        = int(cleaning.get('mad_mult', 15.0))
+    mad_mult        = float(cleaning.get('mad_mult', 15.0))
     az_bounds       = tuple(cleaning.get('az_bounds', [-0.125, 0.55]))
     rg_bounds       = tuple(cleaning.get('rg_bounds', [-0.58,  1.75]))
     temporal_filter = tuple(cleaning.get('temporal_filter', [3, 7, 7]))
@@ -304,19 +304,14 @@ if __name__ == '__main__':
     rg_res      = vel_cfg.get('rg_res',    2.3)
     inc_angle   = vel_cfg.get('inc_angle', 38.3)
     heading     = vel_cfg.get('heading',   0.0097)
-
-    # . . Grid params (only needed for stacking)
-    grid        = postprocessing.get('grid', {})
-    
-    if not stack and input_file is None:
-        print("Error: config must specify 'stack: true', an 'input' file, or both.")
-        sys.exit(1)
         
-    if stack:
+    if do_stack:
         print('Stacking offset pairs...')
         fileroots = ['dense_offsets.nc', 'dense_offsets_snr.nc', 'dense_offsets_cov.nc']
         for fr in fileroots:
-            resave_offset_nc(fr,
+            resave_offset_nc(
+                fr,
+                output_dir=stack_out_dir,
                 xmin=grid.get('xmin', 1.345e6+50),
                 xmax=grid.get('xmax', 1.43e6-50),
                 nx=grid.get('nx', 1699),
@@ -324,11 +319,17 @@ if __name__ == '__main__':
                 ymax=grid.get('ymax', 1.76e6-50),
                 ny=grid.get('ny', 2279),
             )
+        # Derive offsets path from output_dir
+        offsets_file = str(Path(stack_out_dir) / 'dense_offsets.nc')
 
+    else:
+        if offsets_file is None:
+            print("Error: stack.enabled is false but no 'offsets' path was provided in config.")
+            sys.exit(1)
+    
     # . . Read in dataset of all offsets
-    input_file = input_file or './dense_offsets.nc'
-    print(f'Reading offsets from {input_file}...')
-    ds = xr.open_dataset(input_file)
+    print(f'Reading offsets from {offsets_file}...')
+    ds = xr.open_dataset(offsets_file)
 
     print('Cleaning offsets...')
     ds_clean = offset_cleaning(
@@ -344,13 +345,13 @@ if __name__ == '__main__':
     
     if do_velocity:
         print(f'Converting to velocity {vel_file}...')
-        convert_coords(
+        vel_ds = convert_coords(
             ds_clean, 
             az_res=az_res, 
             rg_res=rg_res,
             inc_angle=inc_angle, 
             heading=heading
-        ).to_netcdf(vel_file)
+        )
 
         vel_ds = vel_ds.assign_attrs({
             "description": "Sentinel-1 dense offset velocities processed using ISCE2 topsApp. "
@@ -366,4 +367,4 @@ if __name__ == '__main__':
             "filter_az_bounds":              str(az_bounds),
             "filter_rg_bounds":              str(rg_bounds),
             "filter_temporal":               str(temporal_filter),
-        })
+        }).to_netcdf(vel_file)

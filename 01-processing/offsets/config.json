@@ -35,17 +35,20 @@
         "omp_num_threads": 8
     },
     "postprocessing": {
-        "stack": false,
-        "input": "./dense_offsets.nc",
-        "output": "../data/filt_dense_offsets.nc",
-        "grid": {
-            "xmin": 1345050,
-            "xmax": 1429950,
-            "nx": 1699,
-            "ymin": 1646050,
-            "ymax": 1759950,
-            "ny": 2279
+        "stack": {
+            "enabled": true,
+            "output_dir": "../../data",
+            "grid": {
+                "xmin": 1345050,
+                "xmax": 1429950,
+                "nx": 1699,
+                "ymin": 1646050,
+                "ymax": 1759950,
+                "ny": 2279
+            }
         },
+        "offsets": "../../data/dense_offsets.nc",
+        "output": "../../data/filt_dense_offsets.nc",
         "cleaning": {
             "window_size": 31,
             "mad_mult": 10.0,
@@ -55,7 +58,7 @@
         },
         "velocity": {
             "do_velocity": true,
-            "output": "../data/velocity.nc",
+            "output": "../../data/velocity/velocity-timeseries.nc",
             "az_res": 14.1,
             "rg_res": 2.3,
             "inc_angle": 38.3,
