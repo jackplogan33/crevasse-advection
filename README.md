@@ -95,7 +95,7 @@ Starting from the velocity time series, Part 2 derives the strain rate tensor an
 
 Key steps:
 1. Strain rate computation via Savitzky-Golay filtering or finite differences
-2. Roation of the strain tensor into along- and across-flow components
+2. Rotation of the strain tensor into along- and across-flow components
 3. Deviatoric and Cauchy stress calculation following Glen's flow law
 4. Lagrangian parcel tracking with 4-th order Runge-Kutta integration
 5. Ensemble advection over randomly sampled starting locations
@@ -110,4 +110,4 @@ If you use this code or data, please cite both the paper and this repository:
 
 > **Paper:** [TBD]    
 > **Data:**  [DOI: 10.5281/zenodo.20535986] (reserved, not published)    
-> **Code:** [TBD: Zenodo DOI]    
+> **Code:** [DOI: 10.5281/zenodo.20550146] (reserved, not published)    
